@@ -45,10 +45,12 @@ android_app {
         "com.android.phone.common-lib",
         "guava",
         "PlatformProperties",
+        "modules-utils-fastxmlserializer",
         "modules-utils-os",
         "nist-sip",
         "service-entitlement",
         "telephony_flags_core_java_lib",
+        "android.permission.flags-aconfig-java",
     ],
 
     srcs: [
