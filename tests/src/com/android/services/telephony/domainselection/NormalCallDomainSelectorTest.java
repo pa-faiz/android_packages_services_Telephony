@@ -31,7 +31,10 @@ import android.content.Context;
 import android.os.CancellationSignal;
 import android.os.HandlerThread;
 import android.os.Looper;
+import android.os.PersistableBundle;
+import android.telecom.TelecomManager;
 import android.telephony.AccessNetworkConstants;
+import android.telephony.CarrierConfigManager;
 import android.telephony.DisconnectCause;
 import android.telephony.DomainSelectionService;
 import android.telephony.DomainSelector;
@@ -75,19 +78,32 @@ public class NormalCallDomainSelectorTest {
     private NormalCallDomainSelector mNormalCallDomainSelector;
 
     @Mock private Context mMockContext;
+    @Mock private CarrierConfigManager mMockCarrierConfigMgr;
     @Mock private ImsManager mMockImsManager;
     @Mock private ImsMmTelManager mMockMmTelManager;
-    @Mock private ServiceState mMockServiceState;
     @Mock private ImsStateTracker mMockImsStateTracker;
     @Mock private DomainSelectorBase.DestroyListener mMockDestroyListener;
+    @Mock private TelecomManager mMockTelecomManager;
 
     @Before
     public void setUp() throws Exception {
         MockitoAnnotations.initMocks(this);
+
         doReturn(Context.TELEPHONY_IMS_SERVICE).when(mMockContext)
                 .getSystemServiceName(ImsManager.class);
         doReturn(mMockImsManager).when(mMockContext)
                 .getSystemService(Context.TELEPHONY_IMS_SERVICE);
+
+        doReturn(Context.CARRIER_CONFIG_SERVICE).when(mMockContext)
+                .getSystemServiceName(CarrierConfigManager.class);
+        doReturn(mMockCarrierConfigMgr).when(mMockContext)
+                .getSystemService(Context.CARRIER_CONFIG_SERVICE);
+
+        doReturn(Context.TELECOM_SERVICE).when(mMockContext)
+                .getSystemServiceName(TelecomManager.class);
+        doReturn(mMockTelecomManager).when(mMockContext)
+                .getSystemService(Context.TELECOM_SERVICE);
+
         doReturn(mMockMmTelManager).when(mMockImsManager).getImsMmTelManager(SUB_ID_1);
         doReturn(mMockMmTelManager).when(mMockImsManager).getImsMmTelManager(SUB_ID_2);
         doNothing().when(mMockImsStateTracker).removeServiceStateListener(any());
@@ -153,14 +169,14 @@ public class NormalCallDomainSelectorTest {
         try {
             mNormalCallDomainSelector.selectDomain(null, null);
         } catch (Exception e) {
-            fail("Invalid input params not handled.");
+            fail("Invalid input params not handled." + e.getMessage());
         }
 
         // Case 2: null TransportSelectorCallback
         try {
             mNormalCallDomainSelector.selectDomain(attributes, null);
         } catch (Exception e) {
-            fail("Invalid params (SelectionAttributes) not handled.");
+            fail("Invalid params (SelectionAttributes) not handled." + e.getMessage());
         }
 
         // Case 3: null SelectionAttributes
@@ -168,7 +184,7 @@ public class NormalCallDomainSelectorTest {
         try {
             mNormalCallDomainSelector.selectDomain(null, transportSelectorCallback);
         } catch (Exception e) {
-            fail("Invalid params (SelectionAttributes) not handled.");
+            fail("Invalid params (SelectionAttributes) not handled." + e.getMessage());
         }
 
         assertTrue(transportSelectorCallback
@@ -185,7 +201,7 @@ public class NormalCallDomainSelectorTest {
         try {
             mNormalCallDomainSelector.selectDomain(attributes, transportSelectorCallback);
         } catch (Exception e) {
-            fail("Invalid params (SelectionAttributes) not handled.");
+            fail("Invalid params (SelectionAttributes) not handled." + e.getMessage());
         }
 
         assertTrue(transportSelectorCallback
@@ -201,9 +217,9 @@ public class NormalCallDomainSelectorTest {
                         .setExitedFromAirplaneMode(false)
                         .build();
         try {
-            mNormalCallDomainSelector.selectDomain(null, transportSelectorCallback);
+            mNormalCallDomainSelector.selectDomain(attributes, transportSelectorCallback);
         } catch (Exception e) {
-            fail("Invalid params (SelectionAttributes) not handled.");
+            fail("Invalid params (SelectionAttributes) not handled." + e.getMessage());
         }
 
         assertTrue(transportSelectorCallback
@@ -211,16 +227,16 @@ public class NormalCallDomainSelectorTest {
 
         // Case 6: Emergency Call
         attributes = new DomainSelectionService.SelectionAttributes.Builder(
-                SLOT_ID, SUB_ID_1, SELECTOR_TYPE_UT)
+                SLOT_ID, SUB_ID_1, SELECTOR_TYPE_CALLING)
                 .setCallId(TEST_CALLID)
                 .setEmergency(true)
                 .setVideoCall(true)
                 .setExitedFromAirplaneMode(false)
                 .build();
         try {
-            mNormalCallDomainSelector.selectDomain(null, transportSelectorCallback);
+            mNormalCallDomainSelector.selectDomain(attributes, transportSelectorCallback);
         } catch (Exception e) {
-            fail("Invalid params (SelectionAttributes) not handled.");
+            fail("Invalid params (SelectionAttributes) not handled." + e.getMessage());
         }
 
         assertTrue(transportSelectorCallback
@@ -239,10 +255,10 @@ public class NormalCallDomainSelectorTest {
                         .setVideoCall(true)
                         .setExitedFromAirplaneMode(false)
                         .build();
-        mNormalCallDomainSelector.selectDomain(attributes, transportSelectorCallback);
         ServiceState serviceState = new ServiceState();
         serviceState.setStateOutOfService();
-        mNormalCallDomainSelector.onServiceStateUpdated(serviceState);
+        initialize(serviceState, false, false, false, false);
+        mNormalCallDomainSelector.selectDomain(attributes, transportSelectorCallback);
         assertTrue(transportSelectorCallback
                 .verifyOnSelectionTerminated(DisconnectCause.OUT_OF_SERVICE));
     }
@@ -303,15 +319,107 @@ public class NormalCallDomainSelectorTest {
         assertTrue(transportSelectorCallback.verifyOnWwanSelected());
         assertTrue(transportSelectorCallback
                 .verifyOnDomainSelected(NetworkRegistrationInfo.DOMAIN_CS));
+
+        //Case 5: Backup calling
+        serviceState.setStateOutOfService();
+        initialize(serviceState, true, true, true, true);
+        mNormalCallDomainSelector.selectDomain(attributes, transportSelectorCallback);
+        assertTrue(transportSelectorCallback.verifyOnWlanSelected());
     }
 
-    class MockTransportSelectorCallback implements TransportSelectorCallback, WwanSelectorCallback {
-        public boolean mCreated = false;
-        public boolean mWlanSelected = false;
-        public boolean mWwanSelected = false;
-        public boolean mSelectionTerminated = false;
-        int mCauseCode = 0;
-        int mSelectedDomain = 0;
+    @Test
+    public void testWPSCallDomainSelection() {
+        MockTransportSelectorCallback transportSelectorCallback =
+                new MockTransportSelectorCallback();
+        DomainSelectionService.SelectionAttributes attributes =
+                new DomainSelectionService.SelectionAttributes.Builder(
+                        SLOT_ID, SUB_ID_1, SELECTOR_TYPE_CALLING)
+                        .setNumber("*272121")
+                        .setCallId(TEST_CALLID)
+                        .setEmergency(false)
+                        .setVideoCall(false)
+                        .setExitedFromAirplaneMode(false)
+                        .build();
+
+        //Case 1: WPS not supported by IMS
+        PersistableBundle config = new PersistableBundle();
+        config.putBoolean(CarrierConfigManager.KEY_SUPPORT_WPS_OVER_IMS_BOOL, false);
+        doReturn(config).when(mMockCarrierConfigMgr).getConfigForSubId(SUB_ID_1);
+        ServiceState serviceState = new ServiceState();
+        serviceState.setState(ServiceState.STATE_IN_SERVICE);
+        initialize(serviceState, true, true, true, true);
+        mNormalCallDomainSelector.selectDomain(attributes, transportSelectorCallback);
+        assertTrue(transportSelectorCallback.verifyOnWwanSelected());
+        assertTrue(transportSelectorCallback
+                .verifyOnDomainSelected(NetworkRegistrationInfo.DOMAIN_CS));
+
+        //Case 2: WPS supported by IMS and WLAN registered
+        config.putBoolean(CarrierConfigManager.KEY_SUPPORT_WPS_OVER_IMS_BOOL, true);
+        serviceState.setState(ServiceState.STATE_IN_SERVICE);
+        initialize(serviceState, true, true, true, true);
+        mNormalCallDomainSelector.selectDomain(attributes, transportSelectorCallback);
+        assertTrue(transportSelectorCallback.verifyOnWlanSelected());
+
+        //Case 2: WPS supported by IMS and LTE registered
+        config.putBoolean(CarrierConfigManager.KEY_SUPPORT_WPS_OVER_IMS_BOOL, true);
+        serviceState.setState(ServiceState.STATE_IN_SERVICE);
+        initialize(serviceState, true, false, true, true);
+        mNormalCallDomainSelector.selectDomain(attributes, transportSelectorCallback);
+        assertTrue(transportSelectorCallback.verifyOnWwanSelected());
+        assertTrue(transportSelectorCallback
+                .verifyOnDomainSelected(NetworkRegistrationInfo.DOMAIN_PS));
+    }
+
+    @Test
+    public void testTtyCallDomainSelection() {
+        MockTransportSelectorCallback transportSelectorCallback =
+                new MockTransportSelectorCallback();
+        DomainSelectionService.SelectionAttributes attributes =
+                new DomainSelectionService.SelectionAttributes.Builder(
+                        SLOT_ID, SUB_ID_1, SELECTOR_TYPE_CALLING)
+                        .setCallId(TEST_CALLID)
+                        .setEmergency(false)
+                        .setVideoCall(false)
+                        .setExitedFromAirplaneMode(false)
+                        .build();
+
+        //Case 1: TTY not supported by IMS and TTY enabled
+        doReturn(TelecomManager.TTY_MODE_FULL).when(mMockTelecomManager).getCurrentTtyMode();
+        PersistableBundle config = new PersistableBundle();
+        config.putBoolean(CarrierConfigManager.KEY_CARRIER_VOLTE_TTY_SUPPORTED_BOOL, false);
+        doReturn(config).when(mMockCarrierConfigMgr).getConfigForSubId(SUB_ID_1);
+        ServiceState serviceState = new ServiceState();
+        serviceState.setState(ServiceState.STATE_IN_SERVICE);
+        initialize(serviceState, true, false, true, true);
+        mNormalCallDomainSelector.selectDomain(attributes, transportSelectorCallback);
+        assertTrue(transportSelectorCallback.verifyOnWwanSelected());
+        assertTrue(transportSelectorCallback
+                .verifyOnDomainSelected(NetworkRegistrationInfo.DOMAIN_CS));
+
+        //Case 2: TTY supported by IMS and TTY enabled
+        config.putBoolean(CarrierConfigManager.KEY_CARRIER_VOLTE_TTY_SUPPORTED_BOOL, true);
+        mNormalCallDomainSelector.selectDomain(attributes, transportSelectorCallback);
+        assertTrue(transportSelectorCallback.verifyOnWwanSelected());
+        assertTrue(transportSelectorCallback
+                .verifyOnDomainSelected(NetworkRegistrationInfo.DOMAIN_PS));
+
+        //Case 3: TTY supported by IMS and TTY disabled
+        doReturn(TelecomManager.TTY_MODE_OFF).when(mMockTelecomManager).getCurrentTtyMode();
+        mNormalCallDomainSelector.selectDomain(attributes, transportSelectorCallback);
+        assertTrue(transportSelectorCallback.verifyOnWwanSelected());
+        assertTrue(transportSelectorCallback
+                .verifyOnDomainSelected(NetworkRegistrationInfo.DOMAIN_PS));
+    }
+
+    static class MockTransportSelectorCallback implements TransportSelectorCallback,
+            WwanSelectorCallback {
+        public boolean mCreated;
+        public boolean mWlanSelected;
+        public boolean mWwanSelected;
+        public boolean mSelectionTerminated;
+        public boolean mDomainSelected;
+        int mCauseCode;
+        int mSelectedDomain;
 
         @Override
         public synchronized void onCreated(DomainSelector selector) {
@@ -323,7 +431,7 @@ public class NormalCallDomainSelectorTest {
         public boolean verifyOnCreated() {
             mCreated = false;
             Log.d(TAG, "verifyOnCreated");
-            waitForCallback();
+            waitForCallback(mCreated);
             return mCreated;
         }
 
@@ -336,7 +444,7 @@ public class NormalCallDomainSelectorTest {
 
         public boolean verifyOnWlanSelected() {
             Log.d(TAG, "verifyOnWlanSelected");
-            waitForCallback();
+            waitForCallback(mWlanSelected);
             return mWlanSelected;
         }
 
@@ -356,7 +464,7 @@ public class NormalCallDomainSelectorTest {
         }
 
         public boolean verifyOnWwanSelected() {
-            waitForCallback();
+            waitForCallback(mWwanSelected);
             return mWwanSelected;
         }
 
@@ -370,17 +478,20 @@ public class NormalCallDomainSelectorTest {
 
         public boolean verifyOnSelectionTerminated(int cause) {
             Log.i(TAG, "verifyOnSelectionTerminated - called");
-            if (!mSelectionTerminated) {
-                waitForCallback();
-            }
+            waitForCallback(mSelectionTerminated);
             return (mSelectionTerminated && cause == mCauseCode);
         }
 
-        private synchronized void waitForCallback() {
+        private synchronized void waitForCallback(boolean condition) {
+            long now = System.currentTimeMillis();
+            long deadline = now + 1000;
             try {
-                wait(1000);
+                while (!condition && now < deadline) {
+                    wait(deadline - now);
+                    now = System.currentTimeMillis();
+                }
             } catch (Exception e) {
-                return;
+                Log.i(TAG, e.getMessage());
             }
         }
 
@@ -396,12 +507,14 @@ public class NormalCallDomainSelectorTest {
         public synchronized void onDomainSelected(@NetworkRegistrationInfo.Domain int domain) {
             Log.i(TAG, "onDomainSelected - called");
             mSelectedDomain = domain;
+            mDomainSelected = true;
             notifyAll();
         }
 
         public boolean verifyOnDomainSelected(int domain) {
             Log.i(TAG, "verifyOnDomainSelected - called");
-            waitForCallback();
+            mDomainSelected = false;
+            waitForCallback(mDomainSelected);
             return (domain == mSelectedDomain);
         }
     }

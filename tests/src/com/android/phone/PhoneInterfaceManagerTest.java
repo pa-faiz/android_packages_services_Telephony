@@ -21,6 +21,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
@@ -40,8 +41,10 @@ import androidx.test.annotation.UiThreadTest;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 
 import com.android.TelephonyTestBase;
+import com.android.internal.telephony.IIntegerConsumer;
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.RILConstants;
+import com.android.internal.telephony.subscription.SubscriptionManagerService;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -51,17 +54,21 @@ import org.mockito.Mock;
 import java.util.Locale;
 
 /**
- * Unit Test for CarrierConfigLoader.
+ * Unit Test for PhoneInterfaceManager.
  */
 @RunWith(AndroidJUnit4.class)
 public class PhoneInterfaceManagerTest extends TelephonyTestBase {
     private PhoneInterfaceManager mPhoneInterfaceManager;
     private SharedPreferences mSharedPreferences;
+    private IIntegerConsumer mIIntegerConsumer;
 
     @Mock
     PhoneGlobals mPhoneGlobals;
     @Mock
     Phone mPhone;
+
+    @Mock
+    private SubscriptionManagerService mSubscriptionManagerService;
 
     @Before
     @UiThreadTest
@@ -72,8 +79,12 @@ public class PhoneInterfaceManagerTest extends TelephonyTestBase {
         // alive on a test devices. You must use the spy to mock behavior. Mocks stemming from the
         // passed context will remain unused.
         mPhoneInterfaceManager = spy(PhoneInterfaceManager.init(mPhoneGlobals));
+        doReturn(mSubscriptionManagerService).when(mPhoneInterfaceManager)
+                .getSubscriptionManagerService();
+        TelephonyManager.setupISubForTest(mSubscriptionManagerService);
         mSharedPreferences = mPhoneInterfaceManager.getSharedPreferences();
         mSharedPreferences.edit().remove(Phone.PREF_NULL_CIPHER_AND_INTEGRITY_ENABLED).commit();
+        mIIntegerConsumer = mock(IIntegerConsumer.class);
     }
 
     @Test
@@ -149,6 +160,7 @@ public class PhoneInterfaceManagerTest extends TelephonyTestBase {
 
     @Test
     public void setNullCipherAndIntegrityEnabled_successfullyEnable() {
+        whenModemSupportsNullCiphers();
         doReturn(201).when(mPhoneInterfaceManager).getHalVersion(anyInt());
         doNothing().when(mPhoneInterfaceManager).enforceModifyPermission();
         assertFalse(mSharedPreferences.contains(Phone.PREF_NULL_CIPHER_AND_INTEGRITY_ENABLED));
@@ -161,6 +173,7 @@ public class PhoneInterfaceManagerTest extends TelephonyTestBase {
 
     @Test
     public void setNullCipherAndIntegrityEnabled_successfullyDisable() {
+        whenModemSupportsNullCiphers();
         doReturn(201).when(mPhoneInterfaceManager).getHalVersion(anyInt());
         doNothing().when(mPhoneInterfaceManager).enforceModifyPermission();
         assertFalse(mSharedPreferences.contains(Phone.PREF_NULL_CIPHER_AND_INTEGRITY_ENABLED));
@@ -194,10 +207,10 @@ public class PhoneInterfaceManagerTest extends TelephonyTestBase {
 
     @Test
     public void isNullCipherAndIntegrityPreferenceEnabled() {
+        whenModemSupportsNullCiphers();
         doReturn(201).when(mPhoneInterfaceManager).getHalVersion(anyInt());
         doNothing().when(mPhoneInterfaceManager).enforceModifyPermission();
 
-        assertTrue(mPhoneInterfaceManager.isNullCipherAndIntegrityPreferenceEnabled());
         mPhoneInterfaceManager.setNullCipherAndIntegrityEnabled(false);
         assertFalse(
                 mSharedPreferences.getBoolean(Phone.PREF_NULL_CIPHER_AND_INTEGRITY_ENABLED, true));
@@ -215,6 +228,18 @@ public class PhoneInterfaceManagerTest extends TelephonyTestBase {
     }
 
     @Test
+    public void isNullCipherAndIntegrityPreferenceEnabled_lackingModemSupport() {
+        whenModemDoesNotSupportNullCiphers();
+        doReturn(201).when(mPhoneInterfaceManager).getHalVersion(anyInt());
+        doNothing().when(mPhoneInterfaceManager).enforceModifyPermission();
+
+        assertThrows(UnsupportedOperationException.class, () -> {
+            mPhoneInterfaceManager.isNullCipherAndIntegrityPreferenceEnabled();
+        });
+
+    }
+
+    @Test
     public void isNullCipherAndIntegrityPreferenceEnabled_lackingPermissions() {
         doReturn(201).when(mPhoneInterfaceManager).getHalVersion(anyInt());
         doThrow(SecurityException.class).when(mPhoneInterfaceManager).enforceReadPermission();
@@ -222,5 +247,40 @@ public class PhoneInterfaceManagerTest extends TelephonyTestBase {
         assertThrows(SecurityException.class, () -> {
             mPhoneInterfaceManager.isNullCipherAndIntegrityPreferenceEnabled();
         });
+    }
+
+    private void whenModemDoesNotSupportNullCiphers() {
+        doReturn(false).when(mPhone).isNullCipherAndIntegritySupported();
+        doReturn(mPhone).when(
+                mPhoneInterfaceManager).getDefaultPhone();
+    }
+
+    private void whenModemSupportsNullCiphers() {
+        doReturn(true).when(mPhone).isNullCipherAndIntegritySupported();
+        doReturn(mPhone).when(
+                mPhoneInterfaceManager).getDefaultPhone();
+    }
+
+    /**
+     * Verify getCarrierRestrictionStatus throws exception for invalid caller package name.
+     */
+    @Test
+    public void getCarrierRestrictionStatus_ReadPrivilegedException2() {
+        doThrow(SecurityException.class).when(
+                mPhoneInterfaceManager).enforceReadPrivilegedPermission(anyString());
+        assertThrows(SecurityException.class, () -> {
+            mPhoneInterfaceManager.getCarrierRestrictionStatus(mIIntegerConsumer, "");
+        });
+    }
+
+    /**
+     * Verify getCarrierRestrictionStatus doesn't throw any exception with valid package name
+     * and with READ_PHONE_STATE permission granted.
+     */
+    @Test
+    public void getCarrierRestrictionStatus() {
+        when(mPhoneInterfaceManager.validateCallerAndGetCarrierId(anyString())).thenReturn(1);
+        mPhoneInterfaceManager.getCarrierRestrictionStatus(mIIntegerConsumer,
+                "com.test.package");
     }
 }

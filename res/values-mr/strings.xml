@@ -424,7 +424,7 @@
   </string-array>
     <string name="cdma_subscription_title" msgid="3449527179325589434">"CDMA सदस्‍यता"</string>
     <string name="cdma_subscription_summary" msgid="5681152534466169001">"RUIM/सिम आणि NV मध्‍ये बदला"</string>
-    <string name="cdma_subscription_dialogtitle" msgid="8872086335839723980">"सदस्यता"</string>
+    <string name="cdma_subscription_dialogtitle" msgid="8872086335839723980">"सदस्यत्व"</string>
   <string-array name="cdma_subscription_choices">
     <item msgid="7989486897370727698">"RUIM/सिम"</item>
     <item msgid="5445342771222849381">"NV"</item>
@@ -862,6 +862,7 @@
     <string name="radioInfo_data_connected" msgid="7637335645634239508">"कनेक्ट केले"</string>
     <string name="radioInfo_data_suspended" msgid="8695262782642002785">"निलंबित केले"</string>
     <string name="radioInfo_unknown" msgid="5401423738500672850">"अज्ञात"</string>
+    <string name="radioInfo_imei_primary" msgid="5948747378637224400">"प्राथमिक"</string>
     <string name="radioInfo_display_packets" msgid="6794302192441084157">"pkts"</string>
     <string name="radioInfo_display_bytes" msgid="7701006329222413797">"बाइट"</string>
     <string name="radioInfo_display_dbm" msgid="7491944975710865703">"dBm"</string>
@@ -920,4 +921,8 @@
     <string name="call_quality_notification_bluetooth_details" msgid="8348950331707346711">"तुमचा ब्लूटूथ सिग्नल कमकुवत आहे. स्पीकरफोनवर स्विच करून पहा."</string>
     <string name="call_quality_notification_name" msgid="3476828289553948830">"कॉल गुणवत्ता सूचना"</string>
     <string name="notification_channel_sip_account" msgid="1261816025156179637">"कालबाह्य झालेली SIP खाती"</string>
+    <string name="send_from_work_profile_title" msgid="9201528838448432473">"या प्रोफाइलवरून मेसेज पाठवू शकत नाही"</string>
+    <string name="send_from_work_profile_description" msgid="5002701841936861636">"तुमचे कामाशी संबंधित धोरण हे तुम्हाला फक्त तुमच्या कार्य प्रोफाइलवरून मेसेज पाठवण्याची अनुमती देते"</string>
+    <string name="send_from_work_profile_cancel" msgid="177746511030381711">"रद्द करा"</string>
+    <string name="send_from_work_profile_action_str" msgid="6892775562934243337">"कार्य प्रोफाइलवर स्विच करा"</string>
 </resources>
