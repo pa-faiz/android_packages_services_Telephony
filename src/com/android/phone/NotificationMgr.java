@@ -866,10 +866,7 @@ public class NotificationMgr {
         }
     }
 
-    /**
-     * Dismiss the network selection "no service" notification for all inactive subscriptions.
-     */
-    public void dismissNetworkSelectionNotificationForInactiveSubId() {
+    private void dismissNetworkSelectionNotificationForInactiveSubId() {
         for (int i = 0; i < mSelectedUnavailableNotify.size(); i++) {
             int subId = mSelectedUnavailableNotify.keyAt(i);
             if (!mSubscriptionManager.isActiveSubId(subId)) {
@@ -877,6 +874,15 @@ public class NotificationMgr {
                 clearUpNetworkSelectionNotificationParam(subId);
             }
         }
+    }
+
+    /* package */ void postTransientNotification(int notifyId, CharSequence msg) {
+        if (mToast != null) {
+            mToast.cancel();
+        }
+
+        mToast = Toast.makeText(mContext, msg, Toast.LENGTH_LONG);
+        mToast.show();
     }
 
     private void log(String msg) {
