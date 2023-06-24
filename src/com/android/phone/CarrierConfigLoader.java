@@ -39,6 +39,7 @@ import android.os.HandlerExecutor;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.Message;
+import android.os.PermissionEnforcer;
 import android.os.PersistableBundle;
 import android.os.Process;
 import android.os.RemoteException;
@@ -704,6 +705,7 @@ public class CarrierConfigLoader extends ICarrierConfigLoader.Stub {
     /* package */ CarrierConfigLoader(@NonNull Context context,
             //TODO: Remove SubscriptionInfoUpdater.
             @Nullable SubscriptionInfoUpdater subscriptionInfoUpdater, @NonNull Looper looper) {
+        super(PermissionEnforcer.fromContext(context));
         mContext = context;
         mPlatformCarrierConfigPackage =
                 mContext.getString(R.string.platform_carrier_config_package);
@@ -1481,11 +1483,11 @@ public class CarrierConfigLoader extends ICarrierConfigLoader.Stub {
         return configSubset;
     }
 
+    @android.annotation.EnforcePermission(android.Manifest.permission.MODIFY_PHONE_STATE)
     @Override
     public void overrideConfig(int subscriptionId, @Nullable PersistableBundle overrides,
             boolean persistent) {
-        mContext.enforceCallingOrSelfPermission(
-                android.Manifest.permission.MODIFY_PHONE_STATE, null);
+        overrideConfig_enforcePermission();
         int phoneId = SubscriptionManager.getPhoneId(subscriptionId);
         if (!SubscriptionManager.isValidPhoneId(phoneId)) {
             logd("Ignore invalid phoneId: " + phoneId + " for subId: " + subscriptionId);
@@ -1551,10 +1553,10 @@ public class CarrierConfigLoader extends ICarrierConfigLoader.Stub {
         updateConfigForPhoneId(phoneId);
     }
 
+    @android.annotation.EnforcePermission(android.Manifest.permission.MODIFY_PHONE_STATE)
     @Override
     public void updateConfigForPhoneId(int phoneId, @NonNull String simState) {
-        mContext.enforceCallingOrSelfPermission(
-                android.Manifest.permission.MODIFY_PHONE_STATE, null);
+        updateConfigForPhoneId_enforcePermission();
         logdWithLocalLog("Update config for phoneId: " + phoneId + " simState: " + simState);
         if (!SubscriptionManager.isValidPhoneId(phoneId)) {
             throw new IllegalArgumentException("Invalid phoneId: " + phoneId);
@@ -1581,12 +1583,11 @@ public class CarrierConfigLoader extends ICarrierConfigLoader.Stub {
         }
     }
 
+    @android.annotation.EnforcePermission(android.Manifest.permission.READ_PRIVILEGED_PHONE_STATE)
     @Override
     @NonNull
     public String getDefaultCarrierServicePackageName() {
-        mContext.enforceCallingOrSelfPermission(
-                android.Manifest.permission.READ_PRIVILEGED_PHONE_STATE,
-                "getDefaultCarrierServicePackageName");
+        getDefaultCarrierServicePackageName_enforcePermission();
         return mPlatformCarrierConfigPackage;
     }
 

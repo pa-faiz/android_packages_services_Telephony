@@ -764,8 +764,12 @@ public class PhoneUtils {
     }
 
     public static PhoneAccountHandle makePstnPhoneAccountHandle(Phone phone) {
-        return makePstnPhoneAccountHandleWithPrefix(phone, "",
-                false, (phone != null) ? phone.getUserHandle() : null);
+        if (phone == null) {
+            return null;
+        } else {
+            return makePstnPhoneAccountHandleWithPrefix(phone, "",
+                    false, phone.getUserHandle());
+        }
     }
 
     public static PhoneAccountHandle makePstnPhoneAccountHandleWithPrefix(

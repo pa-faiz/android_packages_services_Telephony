@@ -41,8 +41,10 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Message;
+import android.os.PermissionEnforcer;
 import android.os.PersistableBundle;
 import android.os.UserHandle;
+import android.os.test.FakePermissionEnforcer;
 import android.service.carrier.CarrierIdentifier;
 import android.telephony.CarrierConfigManager;
 import android.telephony.SubscriptionManager;
@@ -101,10 +103,17 @@ public class CarrierConfigLoaderTest extends TelephonyTestBase {
     private HandlerThread mHandlerThread;
     private TestableLooper mTestableLooper;
 
+    // The AIDL stub will use PermissionEnforcer to check permission from the caller.
+    private FakePermissionEnforcer mFakePermissionEnforcer = new FakePermissionEnforcer();
+
     @Before
     public void setUp() throws Exception {
         super.setUp();
         MockitoAnnotations.initMocks(this);
+        doReturn(Context.PERMISSION_ENFORCER_SERVICE).when(mContext).getSystemServiceName(
+                eq(PermissionEnforcer.class));
+        doReturn(mFakePermissionEnforcer).when(mContext).getSystemService(
+                eq(Context.PERMISSION_ENFORCER_SERVICE));
         replaceInstance(SubscriptionManagerService.class, "sInstance", null,
                 mSubscriptionManagerService);
 
@@ -147,6 +156,9 @@ public class CarrierConfigLoaderTest extends TelephonyTestBase {
     @After
     public void tearDown() throws Exception {
         mContext.revokeAllPermissions();
+        mFakePermissionEnforcer.revoke(android.Manifest.permission.DUMP);
+        mFakePermissionEnforcer.revoke(android.Manifest.permission.MODIFY_PHONE_STATE);
+        mFakePermissionEnforcer.revoke(android.Manifest.permission.READ_PRIVILEGED_PHONE_STATE);
         mTestableLooper.destroy();
         mHandlerThread.quit();
         super.tearDown();
@@ -169,7 +181,7 @@ public class CarrierConfigLoaderTest extends TelephonyTestBase {
      */
     @Test
     public void testUpdateConfigForPhoneId_invalidPhoneId() throws Exception {
-        mContext.grantPermission(STUB_PERMISSION_ENABLE_ALL);
+        mFakePermissionEnforcer.grant(android.Manifest.permission.MODIFY_PHONE_STATE);
 
         assertThrows(IllegalArgumentException.class,
                 () -> mCarrierConfigLoader.updateConfigForPhoneId(
@@ -187,7 +199,7 @@ public class CarrierConfigLoaderTest extends TelephonyTestBase {
         if (!SubscriptionManager.isValidPhoneId(SubscriptionManager.getPhoneId(DEFAULT_SUB_ID))) {
             return;
         }
-        mContext.grantPermission(STUB_PERMISSION_ENABLE_ALL);
+        mFakePermissionEnforcer.grant(android.Manifest.permission.MODIFY_PHONE_STATE);
         doNothing().when(mContext).sendBroadcastAsUser(any(Intent.class), any(UserHandle.class));
 
         // Prepare a cached config to fetch from xml
@@ -220,7 +232,7 @@ public class CarrierConfigLoaderTest extends TelephonyTestBase {
         if (!SubscriptionManager.isValidPhoneId(SubscriptionManager.getPhoneId(DEFAULT_SUB_ID))) {
             return;
         }
-        mContext.grantPermission(STUB_PERMISSION_ENABLE_ALL);
+        mFakePermissionEnforcer.grant(android.Manifest.permission.MODIFY_PHONE_STATE);
 
         // Prepare to make sure we can save the config into the XML file which used as cache
         doReturn(PLATFORM_CARRIER_CONFIG_PACKAGE).when(mTelephonyManager)
@@ -257,7 +269,7 @@ public class CarrierConfigLoaderTest extends TelephonyTestBase {
      */
     @Test
     public void testOverrideConfig_invalidSubId() throws Exception {
-        mContext.grantPermission(STUB_PERMISSION_ENABLE_ALL);
+        mFakePermissionEnforcer.grant(android.Manifest.permission.MODIFY_PHONE_STATE);
 
         assertThrows(IllegalArgumentException.class, () -> mCarrierConfigLoader.overrideConfig(
                 SubscriptionManager.INVALID_SUBSCRIPTION_ID, new PersistableBundle(), false));
@@ -272,7 +284,7 @@ public class CarrierConfigLoaderTest extends TelephonyTestBase {
         if (!SubscriptionManager.isValidPhoneId(SubscriptionManager.getPhoneId(DEFAULT_SUB_ID))) {
             return;
         }
-        mContext.grantPermission(STUB_PERMISSION_ENABLE_ALL);
+        mFakePermissionEnforcer.grant(android.Manifest.permission.MODIFY_PHONE_STATE);
 
         mCarrierConfigLoader.overrideConfig(DEFAULT_SUB_ID, null /*overrides*/,
                 false/*persistent*/);
@@ -299,7 +311,7 @@ public class CarrierConfigLoaderTest extends TelephonyTestBase {
         if (!SubscriptionManager.isValidPhoneId(SubscriptionManager.getPhoneId(DEFAULT_SUB_ID))) {
             return;
         }
-        mContext.grantPermission(STUB_PERMISSION_ENABLE_ALL);
+        mFakePermissionEnforcer.grant(android.Manifest.permission.MODIFY_PHONE_STATE);
 
         PersistableBundle config = getTestConfig();
         mCarrierConfigLoader.overrideConfig(DEFAULT_SUB_ID, config /*overrides*/,
@@ -325,7 +337,7 @@ public class CarrierConfigLoaderTest extends TelephonyTestBase {
      */
     @Test
     public void testNotifyConfigChangedForSubId_invalidSubId() throws Exception {
-        mContext.grantPermission(STUB_PERMISSION_ENABLE_ALL);
+        mFakePermissionEnforcer.grant(STUB_PERMISSION_ENABLE_ALL);
 
         assertThrows(IllegalArgumentException.class,
                 () -> mCarrierConfigLoader.notifyConfigChangedForSubId(
@@ -363,7 +375,7 @@ public class CarrierConfigLoaderTest extends TelephonyTestBase {
      */
     @Test
     public void testGetDefaultCarrierServicePackageName_withPermission() {
-        mContext.grantPermission(STUB_PERMISSION_ENABLE_ALL);
+        mFakePermissionEnforcer.grant(android.Manifest.permission.READ_PRIVILEGED_PHONE_STATE);
 
         assertThat(mCarrierConfigLoader.getDefaultCarrierServicePackageName())
                 .isEqualTo(PLATFORM_CARRIER_CONFIG_PACKAGE);
@@ -434,7 +446,7 @@ public class CarrierConfigLoaderTest extends TelephonyTestBase {
     @Test
     public void testMultiSimConfigChanged() throws Exception {
         replaceInstance(TelephonyManager.class, "sInstance", null, mTelephonyManager);
-        mContext.grantPermission(STUB_PERMISSION_ENABLE_ALL);
+        mFakePermissionEnforcer.grant(android.Manifest.permission.MODIFY_PHONE_STATE);
 
         // Changed from 1 to 2.
         doReturn(2).when(mTelephonyManager).getActiveModemCount();
