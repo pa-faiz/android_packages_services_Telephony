@@ -345,17 +345,20 @@ public class PhoneGlobals extends ContextWrapper {
                     break;
 
                 case EVENT_SIM_STATE_CHANGED:
-                    // Marks the event where the SIM goes into ready state.
-                    // Right now, this is only used for the PUK-unlocking
-                    // process.
                     EventSimStateChangedBag bag = (EventSimStateChangedBag)msg.obj;
+                    // Dismiss the "No services" notification if the SIM is removed.
+                    if (IccCardConstants.INTENT_VALUE_ICC_ABSENT.equals(bag.mIccStatus)) {
+                        notificationMgr.dismissNetworkSelectionNotificationForInactiveSubId();
+                    }
+
+                    // Marks the event where the SIM goes into ready state.
+                    // Right now, this is only used for the PUK-unlocking process.
                     if (IccCardConstants.INTENT_VALUE_ICC_READY.equals(bag.mIccStatus)
                             || IccCardConstants.INTENT_VALUE_ICC_LOADED.equals(bag.mIccStatus)
                             || IccCardConstants.INTENT_VALUE_ICC_NOT_READY.equals(bag.mIccStatus)
                             || IccCardConstants.INTENT_VALUE_ICC_ABSENT.equals(bag.mIccStatus)) {
-                        // when the right event is triggered and there
-                        // are UI objects in the foreground, we close
-                        // them to display the lock panel.
+                        // When the right event is triggered and there are UI objects in the
+                        // foreground, we close them to display the lock panel.
                         if (mPUKEntryActivity != null) {
                             Log.i(LOG_TAG, "Dismiss puk entry activity");
                             mPUKEntryActivity.finish();
@@ -806,13 +809,14 @@ public class PhoneGlobals extends ContextWrapper {
     }
 
     private void handleAirplaneModeChange(boolean isAirplaneNewlyOn) {
+        Log.i(LOG_TAG, "handleAirplaneModeChange: isAirplaneNewlyOn=" + isAirplaneNewlyOn);
         int cellState =
                 Settings.Global.getInt(
                         getContentResolver(), Settings.Global.CELL_ON, PhoneConstants.CELL_ON_FLAG);
         switch (cellState) {
             case PhoneConstants.CELL_OFF_FLAG:
-                // Airplane mode does not affect the cell radio if user
-                // has turned it off.
+                // Airplane mode does not affect the cell radio if user has turned it off.
+                Log.i(LOG_TAG, "Ignore airplane mode change due to cell off.");
                 break;
             case PhoneConstants.CELL_ON_FLAG:
                 maybeTurnCellOff(isAirplaneNewlyOn);
@@ -883,12 +887,16 @@ public class PhoneGlobals extends ContextWrapper {
             } else {
                 Log.i(LOG_TAG, "Ignoring airplane mode: settings prevent cell radio power off");
             }
+        } else {
+            Log.i(LOG_TAG, "Ignoring airplane mode: not newly on");
         }
     }
 
     private void maybeTurnCellOn(boolean isAirplaneNewlyOn) {
         if (!isAirplaneNewlyOn) {
             setRadioPowerOn();
+        } else {
+            Log.i(LOG_TAG, "Ignoring airplane mode off: radio is already on.");
         }
     }
 
