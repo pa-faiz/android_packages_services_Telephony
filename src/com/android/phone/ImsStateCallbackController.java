@@ -743,7 +743,7 @@ public class ImsStateCallbackController {
         updateFeatureControllerSize(numSlots);
 
         mTelephonyRegistryManager.addOnSubscriptionsChangedListener(
-                mSubChangedListener, mSubChangedListener.getHandlerExecutor());
+                mSubChangedListener, mHandler::post);
 
         PhoneConfigurationManager.registerForMultiSimConfigChange(mHandler,
                 EVENT_MSIM_CONFIGURATION_CHANGE, null);
