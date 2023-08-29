@@ -33,19 +33,25 @@
             android:layout_height="wrap_content" android:layout_weight="0"
             android:textColor="@android:color/holo_blue_dark"
             android:textSize="20dp"
-            android:text="SatelliteModemState APIs"/>
+            android:text="Send and Receive APIs"/>
         <Button
-            android:id="@+id/registerForSatelliteModemStateChanged"
+            android:id="@+id/sendMessage"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:paddingRight="4dp"
-            android:text="@string/registerForSatelliteModemStateChanged"/>
+            android:text="@string/sendMessage"/>
         <Button
-            android:id="@+id/unregisterForSatelliteModemStateChanged"
+            android:id="@+id/receiveMessage"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:paddingRight="4dp"
-            android:text="@string/unregisterForSatelliteModemStateChanged"/>
+            android:text="@string/receiveMessage"/>
+        <EditText
+            android:id="@+id/enterText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:hint="Enter message to send"
+            android:inputType="text" />
         <Button
             android:id="@+id/Back"
             android:onClick="Back"
@@ -56,14 +62,36 @@
             android:layout_height="wrap_content"
             android:paddingRight="4dp"
             android:text="@string/Back"/>
-         <TextView
-            android:id="@+id/text_id"
-            android:layout_width="300dp"
-            android:layout_height="200dp"
+        <TextView
+            android:id="@+id/showErrorStatus"
+            android:layout_width="400dp"
+            android:layout_height="50dp"
+            android:capitalize="characters"
+            android:textColor="@android:color/holo_blue_light"
+            android:textSize="15dp" />
+        <TextView
+            android:id="@+id/devicePosition"
+            android:layout_width="400dp"
+            android:layout_height="65dp"
+            android:capitalize="characters"
+            android:textColor="@android:color/holo_blue_light"
+            android:layout_centerVertical="true"
+            android:textSize="15dp" />
+        <TextView
+            android:id="@+id/satellitePosition"
+            android:layout_width="400dp"
+            android:layout_height="65dp"
+            android:capitalize="characters"
+            android:textColor="@android:color/holo_blue_light"
+            android:layout_centerVertical="true"
+            android:textSize="15dp" />
+        <TextView
+            android:id="@+id/messageStatus"
+            android:layout_width="400dp"
+            android:layout_height="65dp"
             android:capitalize="characters"
             android:textColor="@android:color/holo_blue_light"
             android:layout_centerVertical="true"
             android:textSize="15dp" />
     </LinearLayout>
 </LinearLayout>
-

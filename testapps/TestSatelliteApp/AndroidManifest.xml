@@ -41,9 +41,9 @@
         </service>
 
         <activity android:name=".SatelliteControl" />
-        <activity android:name=".SatelliteTransmissionUpdates" />
         <activity android:name=".Datagram" />
         <activity android:name=".Provisioning" />
-        <activity android:name=".SatelliteModemState" />
+        <activity android:name=".MultipleSendReceive" />
+        <activity android:name=".SendReceive" />
     </application>
 </manifest>

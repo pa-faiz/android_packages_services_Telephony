@@ -37,7 +37,7 @@ import java.util.List;
 public class SatelliteTestApp extends Activity {
 
     private static final String TAG = "SatelliteTestApp";
-    private static TestSatelliteService sSatelliteService;
+    public static TestSatelliteService sSatelliteService;
     private final Object mSendDatagramLock = new Object();
 
     private TestSatelliteServiceConnection mSatelliteServiceConn;
@@ -61,14 +61,6 @@ public class SatelliteTestApp extends Activity {
                 startActivity(intent);
             }
         });
-        findViewById(R.id.SatelliteTransmissionUpdates).setOnClickListener(new OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                Intent intent = new Intent(SatelliteTestApp.this,
-                        SatelliteTransmissionUpdates.class);
-                startActivity(intent);
-            }
-        });
         findViewById(R.id.Datagram).setOnClickListener(new OnClickListener() {
             @Override
             public void onClick(View view) {
@@ -83,10 +75,17 @@ public class SatelliteTestApp extends Activity {
                 startActivity(intent);
             }
         });
-        findViewById(R.id.SatelliteModemState).setOnClickListener(new OnClickListener() {
+        findViewById(R.id.MultipleSendReceive).setOnClickListener(new OnClickListener() {
             @Override
             public void onClick(View view) {
-                Intent intent = new Intent(SatelliteTestApp.this, SatelliteModemState.class);
+                Intent intent = new Intent(SatelliteTestApp.this, MultipleSendReceive.class);
+                startActivity(intent);
+            }
+        });
+        findViewById(R.id.SendReceive).setOnClickListener(new OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                Intent intent = new Intent(SatelliteTestApp.this, SendReceive.class);
                 startActivity(intent);
             }
         });
