@@ -412,7 +412,22 @@ public class NotificationMgr {
                 }
             }
         } else {
-            cancelAsUser(Integer.toString(subId) /* tag */, VOICEMAIL_NOTIFICATION, UserHandle.ALL);
+            UserHandle subAssociatedUserHandle =
+                    mSubscriptionManager.getSubscriptionUserHandle(subId);
+            List<UserHandle> users = getUsersExcludeDying();
+            for (UserHandle userHandle : users) {
+                boolean isManagedUser = mUserManager.isManagedProfile(userHandle.getIdentifier());
+                if (!hasUserRestriction(UserManager.DISALLOW_OUTGOING_CALLS, userHandle)
+                        && (userHandle.equals(subAssociatedUserHandle)
+                            || (subAssociatedUserHandle == null && !isManagedUser))
+                        && !maybeSendVoicemailNotificationUsingDefaultDialer(phone, 0, null, null,
+                        false, userHandle, isRefresh, subId)) {
+                    cancelAsUser(
+                            Integer.toString(subId) /* tag */,
+                            VOICEMAIL_NOTIFICATION,
+                            userHandle);
+                }
+            }
         }
     }
 
@@ -829,7 +844,8 @@ public class NotificationMgr {
         Phone phone = SubscriptionManager.isValidPhoneId(phoneId) ?
                 PhoneFactory.getPhone(phoneId) : PhoneFactory.getDefaultPhone();
         if (TelephonyCapabilities.supportsNetworkSelection(phone)) {
-            if (SubscriptionManager.isValidSubscriptionId(subId)) {
+            if (SubscriptionManager.isValidSubscriptionId(subId)
+                    && mSubscriptionManager.isActiveSubId(subId)) {
                 SharedPreferences sp = PreferenceManager.getDefaultSharedPreferences(mContext);
                 String selectedNetworkOperatorName =
                         sp.getString(Phone.NETWORK_SELECTION_NAME_KEY + subId, "");
