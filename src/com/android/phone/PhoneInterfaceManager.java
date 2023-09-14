@@ -2737,6 +2737,9 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
          * If PUK is null, unlock SIM card with PIN
          *
          * If PUK is not null, unlock SIM card with PUK and set PIN code
+         *
+         * Besides, since it is reused in class level, the thread's looper will be stopped to avoid
+         * its thread leak.
          */
         synchronized int[] unlockSim(String puk, String pin) {
 
@@ -2772,6 +2775,8 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
             if (mResult == PhoneConstants.PIN_RESULT_SUCCESS && pin.length() > 0) {
                 UiccController.getInstance().getPinStorage().storePin(pin, mPhoneId);
             }
+            // This instance is no longer reused, so quit its thread's looper.
+            mHandler.getLooper().quitSafely();
 
             return resultArray;
         }
@@ -12493,9 +12498,9 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
      */
     @RequiresPermission(Manifest.permission.SATELLITE_COMMUNICATION)
 
-    public void onDeviceAlignedWithSatellite(int subId, @NonNull boolean isAligned) {
+    public void setDeviceAlignedWithSatellite(int subId, @NonNull boolean isAligned) {
         enforceSatelliteCommunicationPermission("informDeviceAlignedToSatellite");
-        mSatelliteController.onDeviceAlignedWithSatellite(subId, isAligned);
+        mSatelliteController.setDeviceAlignedWithSatellite(subId, isAligned);
     }
 
     /**

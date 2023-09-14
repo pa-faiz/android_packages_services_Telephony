@@ -318,7 +318,7 @@
         <activity android:name="GsmUmtsCallForwardOptions"
                 android:label="@string/labelCF"
                 android:configChanges="orientation|screenSize|keyboardHidden"
-                android:exported="true"
+                android:exported="false"
                 android:theme="@style/CallSettingsWithoutDividerTheme">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -328,7 +328,7 @@
         <activity android:name="CdmaCallForwardOptions"
                 android:label="@string/labelCF"
                 android:configChanges="orientation|screenSize|keyboardHidden"
-                android:exported="true"
+                android:exported="false"
                 android:theme="@style/CallSettingsWithoutDividerTheme">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -338,7 +338,7 @@
         <activity android:name="GsmUmtsCallBarringOptions"
                 android:label="@string/labelCallBarring"
                 android:configChanges="orientation|screenSize|keyboardHidden"
-                android:exported="true"
+                android:exported="false"
                 android:theme="@style/DialerSettingsLight">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -348,7 +348,7 @@
         <activity android:name="GsmUmtsAdditionalCallOptions"
                 android:label="@string/labelGSMMore"
                 android:configChanges="orientation|screenSize|keyboardHidden"
-                android:exported="true"
+                android:exported="false"
                 android:theme="@style/CallSettingsWithoutDividerTheme">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
