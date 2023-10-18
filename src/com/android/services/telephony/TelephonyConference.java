@@ -23,6 +23,7 @@ import android.telecom.PhoneAccountHandle;
 import com.android.internal.telephony.Call;
 import com.android.internal.telephony.CallStateException;
 import com.android.internal.telephony.Phone;
+import com.android.internal.telephony.flags.Flags;
 
 import java.util.List;
 
@@ -134,7 +135,11 @@ public class TelephonyConference extends TelephonyConferenceBase implements Hold
     public void onHold() {
         final TelephonyConnection connection = getFirstConnection();
         if (connection != null) {
-            connection.performHold();
+            if (Flags.conferenceHoldUnholdChangedToSendMessage()) {
+                connection.onHold();
+            } else {
+                connection.performHold();
+            }
         }
     }
 
@@ -145,7 +150,11 @@ public class TelephonyConference extends TelephonyConferenceBase implements Hold
     public void onUnhold() {
         final TelephonyConnection connection = getFirstConnection();
         if (connection != null) {
-            connection.performUnhold();
+            if (Flags.conferenceHoldUnholdChangedToSendMessage()) {
+                connection.onUnhold();
+            } else {
+                connection.performUnhold();
+            }
         }
     }
 
