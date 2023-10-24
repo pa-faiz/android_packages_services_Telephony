@@ -3441,7 +3441,7 @@ public class TelephonyShellCommand extends BasicShellCommandHandler {
     // clear-carrier-service-package-override
     private int clearCarrierServicePackageOverride() {
         PrintWriter errPw = getErrPrintWriter();
-        int subId = getDefaultSlot();
+        int subId = SubscriptionManager.getDefaultSubscriptionId();
 
         String opt;
         while ((opt = getNextOption()) != null) {

@@ -133,7 +133,6 @@
     <string name="cdma_call_waiting_in_ims_off" msgid="1099246114368636334">"Η αναμονή κλήσης σε λειτουργία άμεσων μηνυμάτων (ΙΜ) είναι απενεργοποιημένη"</string>
     <string name="updating_title" msgid="6130548922615719689">"Ρυθμίσεις κλήσης"</string>
     <string name="call_settings_admin_user_only" msgid="7238947387649986286">"Οι ρυθμίσεις κλήσεων μπορούν να αλλάξουν μόνο από τον χρήστη που έχει ρόλο διαχειριστή."</string>
-    <string name="call_settings_no_config_mobile_networks" msgid="5158212415701421219">"Ο κάτοχος της συσκευής έχει περιορίσει τη δυνατότητα αλλαγής των ρυθμίσεων δικτύου κινητής τηλεφωνίας."</string>
     <string name="phone_account_settings_user_restriction" msgid="9142685151087208396">"Οι ρυθμίσεις λογαριασμού του τηλεφώνου μπορούν να αλλάξουν μόνο από τον διαχειριστή ή τον χρήστη του προφίλ εργασίας."</string>
     <string name="call_settings_with_label" msgid="8460230435361579511">"Ρυθμίσεις (<xliff:g id="SUBSCRIPTIONLABEL">%s</xliff:g>)"</string>
     <string name="error_updating_title" msgid="2024290892676808965">"Σφάλμα ρυθμίσεων κλήσης"</string>
@@ -684,8 +683,8 @@
     <string name="callFailed_wifi_lost" msgid="1788036730589163141">"Η σύνδεση Wi-Fi χάθηκε. Η κλήση τερματίστηκε."</string>
     <string name="dialFailed_low_battery" msgid="6857904237423407056">"Η βιντεοκλήση δεν μπορεί να πραγματοποιηθεί λόγω χαμηλής στάθμης μπαταρίας"</string>
     <string name="callFailed_low_battery" msgid="4056828320214416182">"Η βιντεοκλήση τερματίστηκε λόγω χαμηλής στάθμης μπαταρίας"</string>
-    <string name="callFailed_emergency_call_over_wfc_not_available" msgid="5944309590693432042">"Η δυνατότητα κλήσεων Wi-Fi δεν είναι διαθέσιμη για κλήσεις έκτακτης ανάγκης σε αυτήν την τοποθεσία."</string>
-    <string name="callFailed_wfc_service_not_available_in_this_location" msgid="3624536608369524988">"Η δυνατότητα κλήσεων Wi-Fi δεν είναι διαθέσιμη σε αυτήν την τοποθεσία."</string>
+    <string name="callFailed_emergency_call_over_wfc_not_available" msgid="5944309590693432042">"Η δυνατότητα κλήσεων Wi-Fi δεν είναι διαθέσιμη για κλήσεις έκτακτης ανάγκης σε αυτή την τοποθεσία."</string>
+    <string name="callFailed_wfc_service_not_available_in_this_location" msgid="3624536608369524988">"Η δυνατότητα κλήσεων Wi-Fi δεν είναι διαθέσιμη σε αυτή την τοποθεσία."</string>
     <string name="change_pin_title" msgid="3564254326626797321">"Αλλαγή PIN αυτόματου τηλεφωνητή"</string>
     <string name="change_pin_continue_label" msgid="5177011752453506371">"Συνέχεια"</string>
     <string name="change_pin_cancel_label" msgid="2301711566758827936">"Ακύρωση"</string>

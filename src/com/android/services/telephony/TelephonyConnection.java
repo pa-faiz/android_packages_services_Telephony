@@ -2779,7 +2779,8 @@ abstract class TelephonyConnection extends Connection implements Holdable,
                                             disconnectCause,
                                             preciseDisconnectCause,
                                             mOriginalConnection.getVendorDisconnectCause(),
-                                            getPhone().getPhoneId(), imsReasonInfo));
+                                            getPhone().getPhoneId(), imsReasonInfo,
+                                            new FlagsAdapterImpl()));
                         }
                         close();
                     }

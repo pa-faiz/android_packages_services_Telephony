@@ -19,6 +19,8 @@ package com.android.services.telephony;
 import static android.telephony.DomainSelectionService.SELECTOR_TYPE_CALLING;
 import static android.telephony.TelephonyManager.HAL_SERVICE_VOICE;
 
+import static com.android.internal.telephony.flags.Flags.carrierEnabledSatelliteFlag;
+
 import android.annotation.NonNull;
 import android.app.AlertDialog;
 import android.app.Dialog;
@@ -145,6 +147,9 @@ public class TelephonyConnectionService extends ConnectionService {
     // If configured, reject attempts to dial numbers matching this pattern.
     private static final Pattern CDMA_ACTIVATION_CODE_REGEX_PATTERN =
             Pattern.compile("\\*228[0-9]{0,2}");
+
+    // Max Size of the Short Code (aka Short String from TS 22.030 6.5.2)
+    private static final int MAX_LENGTH_SHORT_CODE = 2;
 
     private final TelephonyConnectionServiceProxy mTelephonyConnectionServiceProxy =
             new TelephonyConnectionServiceProxy() {
@@ -1531,7 +1536,8 @@ public class TelephonyConnectionService extends ConnectionService {
 
             if (!isEmergencyNumber) {
                 boolean disableSwap = false;
-                if (isDsdaOrDsdsTransitionMode()) {
+                if (isDsdaOrDsdsTransitionMode() && !isMmiCode(number)
+                        && !isShortCodeUssd(number)) {
                     Connection conn = getRingingOrDialingConnection();
                     if (conn != null && !Objects.equals(
                             request.getAccountHandle(), conn.getPhoneAccountHandle())) {
@@ -2898,14 +2904,6 @@ public class TelephonyConnectionService extends ConnectionService {
                         getActiveDsdaConnectionPhoneAccountPair();
                 TelephonyConnection connToHold = pairToHold.first;
 
-                if (!isEmergency && isDsdaOrDsdsTransitionMode()
-                    && isRingingCallPresentOnOtherSub(connection.getPhoneAccountHandle())) {
-                   // Do not allow call to be dialed when there is a ringing call on the
-                   // other SUB. Same SUB is handled in PhoneCallTracker
-                   throw new CallStateException(CallStateException.ERROR_CALL_RINGING,
-                           "Can't place a call while another is ringing.");
-                }
-
                 if (mTelephonyManagerProxy.isDsdsTransitionMode()
                     && (connToHold == null || !Objects.equals(pairToHold.second,
                             connection.getPhoneAccountHandle())))  {
@@ -3055,8 +3053,7 @@ public class TelephonyConnectionService extends ConnectionService {
 
         String dialPart = PhoneNumberUtils.extractNetworkPortionAlt(
                 PhoneNumberUtils.stripSeparators(number));
-        boolean isMmiCode = (dialPart.startsWith("*") || dialPart.startsWith("#"))
-                && dialPart.endsWith("#");
+        boolean isMmiCode = isMmiCode(number);
         boolean isSuppServiceCode = ImsPhoneMmiCode.isSuppServiceCodes(dialPart, phone);
 
         // If the number is both an MMI code and a supplementary service code,
@@ -4974,6 +4971,25 @@ public class TelephonyConnectionService extends ConnectionService {
         return conn instanceof TelephonyConferenceBase;
     }
 
+    private boolean isMmiCode(String number) {
+        String dialPart = PhoneNumberUtils.extractNetworkPortionAlt(
+                PhoneNumberUtils.stripSeparators(number));
+        return (dialPart.startsWith("*") || dialPart.startsWith("#"))
+                && dialPart.endsWith("#");
+    }
+
+    private boolean isShortCodeUssd(String number) {
+        String dialPart = PhoneNumberUtils.extractNetworkPortionAlt(
+                PhoneNumberUtils.stripSeparators(number));
+        if (dialPart != null && dialPart.length() <= MAX_LENGTH_SHORT_CODE) {
+            if (dialPart.length() != MAX_LENGTH_SHORT_CODE ||
+                    dialPart.charAt(0) != '1') {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /* Returns a pair of the active TelephonyConnection and PhoneAccountHandle for DSDA.
      * Throws CallStateException when conference is not an ImsConference or
      * when Connection is not a TelephonyConnection.
@@ -5290,6 +5306,10 @@ public class TelephonyConnectionService extends ConnectionService {
      * else {@code false}.
      */
     private boolean isCallDisallowedDueToSatellite(Phone phone) {
+        if (!carrierEnabledSatelliteFlag()) {
+            return false;
+        }
+
         if (phone == null) {
             return false;
         }
