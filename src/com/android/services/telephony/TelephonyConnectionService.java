@@ -1875,7 +1875,7 @@ public class TelephonyConnectionService extends ConnectionService {
                         Log.d(this, "onCreateOutgoingConnection dial for UT");
                         break;
                     } else if (phone.isOutgoingImsVoiceAllowed()) {
-                        Log.d(this, "onCreateOutgoingConnection dial with PS only");
+                        Log.d(this, "onCreateOutgoingConnection outgoing ims voice dial allowed");
                         break;
                     } else {
                         return Connection.createFailedConnection(
