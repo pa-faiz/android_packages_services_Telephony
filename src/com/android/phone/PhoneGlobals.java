@@ -559,7 +559,7 @@ public class PhoneGlobals extends ContextWrapper {
 
             mKeyguardManager = (KeyguardManager) getSystemService(Context.KEYGUARD_SERVICE);
 
-            phoneMgr = PhoneInterfaceManager.init(this);
+            phoneMgr = PhoneInterfaceManager.init(this, featureFlags);
 
             imsRcsController = ImsRcsController.init(this);
 
