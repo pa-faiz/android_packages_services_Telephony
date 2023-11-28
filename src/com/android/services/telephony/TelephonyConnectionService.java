@@ -16,10 +16,11 @@
 
 package com.android.services.telephony;
 
+import static android.telephony.CarrierConfigManager.KEY_USE_ONLY_DIALED_SIM_ECC_LIST_BOOL;
 import static android.telephony.DomainSelectionService.SELECTOR_TYPE_CALLING;
 import static android.telephony.TelephonyManager.HAL_SERVICE_VOICE;
-import static com.android.internal.telephony.PhoneConstants.PHONE_TYPE_GSM;
 
+import static com.android.internal.telephony.PhoneConstants.PHONE_TYPE_GSM;
 import static com.android.internal.telephony.flags.Flags.carrierEnabledSatelliteFlag;
 
 import android.annotation.NonNull;
@@ -35,6 +36,7 @@ import android.content.IntentFilter;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.ParcelUuid;
+import android.os.PersistableBundle;
 import android.provider.DeviceConfig;
 import android.telecom.Conference;
 import android.telecom.Conferenceable;
@@ -3328,7 +3330,36 @@ public class TelephonyConnectionService extends ConnectionService {
         return false;
     }
 
+    private boolean isEmergencyNumberAllowedOnDialedSim(Phone phone, String number) {
+        CarrierConfigManager cfgManager = (CarrierConfigManager)
+                phone.getContext().getSystemService(Context.CARRIER_CONFIG_SERVICE);
+        if (cfgManager != null) {
+            PersistableBundle b = cfgManager.getConfigForSubId(phone.getSubId(),
+                    KEY_USE_ONLY_DIALED_SIM_ECC_LIST_BOOL);
+            if (b == null) {
+                b = CarrierConfigManager.getDefaultConfig();
+            }
+            // We need to check only when KEY_USE_ONLY_DIALED_SIM_ECC_LIST_BOOL is true.
+            if (b.getBoolean(KEY_USE_ONLY_DIALED_SIM_ECC_LIST_BOOL, false)
+                      && (phone.getEmergencyNumberTracker() != null)) {
+                if (!phone.getEmergencyNumberTracker().isEmergencyNumber(number)) {
+                    Log.i(this, "isEmergencyNumberAllowedOnDialedSim false");
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
     private boolean isNormalRouting(Phone phone, String number) {
+        // Check isEmergencyNumberAllowedOnDialedSim(): some carriers do not want to handle
+        // dial requests for numbers which are in the emergency number list on another SIM,
+        // but not on their own. Such numbers shall be handled by normal call domain selector.
+        return (isNormalRoutingNumber(phone, number)
+                || !isEmergencyNumberAllowedOnDialedSim(phone, number));
+    }
+
+    private boolean isNormalRoutingNumber(Phone phone, String number) {
         if (phone.getEmergencyNumberTracker() != null) {
             // Note: There can potentially be multiple instances of EmergencyNumber found; if any of
             // them have normal routing, then use normal routing.
@@ -3350,7 +3381,7 @@ public class TelephonyConnectionService extends ConnectionService {
     public Phone getPhoneForNormalRoutedEmergencyCall(String number) {
         return Stream.of(mPhoneFactoryProxy.getPhones())
                 .filter(p -> p.shouldPreferInServiceSimForNormalRoutedEmergencyCall()
-                        && isNormalRouting(p, number)
+                        && isNormalRoutingNumber(p, number)
                         && isAvailableForEmergencyCalls(p,
                                 EmergencyNumber.EMERGENCY_CALL_ROUTING_NORMAL))
                 .findFirst().orElse(null);
@@ -5138,6 +5169,19 @@ public class TelephonyConnectionService extends ConnectionService {
                 });
     }
 
+    static boolean isStateActive(Conferenceable conferenceable) {
+        if (conferenceable instanceof Connection) {
+            Connection connection = (Connection) conferenceable;
+            return connection.getState() == Connection.STATE_ACTIVE;
+        } else if (conferenceable instanceof Conference) {
+            Conference conference = (Conference) conferenceable;
+            return conference.getState() == Connection.STATE_ACTIVE;
+        } else {
+            throw new IllegalArgumentException(
+                    "isStateActive(): Unexpected conferenceable! " + conferenceable);
+        }
+    }
+
     static void onHold(Conferenceable conferenceable) {
         if (conferenceable instanceof Connection) {
             Connection connection = (Connection) conferenceable;
@@ -5297,7 +5341,7 @@ public class TelephonyConnectionService extends ConnectionService {
             TelephonyManagerProxy telephonyManagerProxy) {
         Conferenceable c = maybeGetFirstConferenceableFromOtherSubscription(
                 connections, conferences, outgoingHandle, telephonyManagerProxy);
-        if (c != null) {
+        if (c != null && isStateActive(c)) {
             onHold(c);
             return c;
         }
@@ -5347,11 +5391,11 @@ public class TelephonyConnectionService extends ConnectionService {
     private void handleEmergencyCallStartedForSatelliteSOSMessageRecommender(
             @NonNull TelephonyConnection connection, @NonNull Phone phone) {
         if (mSatelliteSOSMessageRecommender == null) {
-            mSatelliteSOSMessageRecommender = new SatelliteSOSMessageRecommender(
+            mSatelliteSOSMessageRecommender = new SatelliteSOSMessageRecommender(phone.getContext(),
                     phone.getContext().getMainLooper());
         }
         connection.addTelephonyConnectionListener(mEmergencyConnectionSatelliteListener);
-        mSatelliteSOSMessageRecommender.onEmergencyCallStarted(connection, phone);
+        mSatelliteSOSMessageRecommender.onEmergencyCallStarted(connection);
     }
 
     /**

@@ -29,6 +29,7 @@ import android.util.Log;
 import android.view.MenuItem;
 
 import com.android.internal.telephony.PhoneConstants;
+import com.android.internal.telephony.flags.Flags;
 
 public class GsmUmtsCallOptions extends PreferenceActivity {
     private static final String LOG_TAG = "GsmUmtsCallOptions";
@@ -97,7 +98,7 @@ public class GsmUmtsCallOptions extends PreferenceActivity {
                 .getSystemService(Context.USER_SERVICE);
         boolean mobileNetworkConfigsRestricted =
                 userManager.hasUserRestriction(UserManager.DISALLOW_CONFIG_MOBILE_NETWORKS);
-        if (mobileNetworkConfigsRestricted) {
+        if (Flags.ensureAccessToCallSettingsIsRestricted() && mobileNetworkConfigsRestricted) {
             Log.i(LOG_TAG, "Mobile network configs are restricted, hiding GSM call "
                     + "forwarding, additional call settings, and call options.");
         }
@@ -106,7 +107,8 @@ public class GsmUmtsCallOptions extends PreferenceActivity {
         if (callForwardingPref != null) {
             if (b != null && b.getBoolean(
                     CarrierConfigManager.KEY_CALL_FORWARDING_VISIBILITY_BOOL) &&
-                    !mobileNetworkConfigsRestricted) {
+                    (!Flags.ensureAccessToCallSettingsIsRestricted() ||
+                            !mobileNetworkConfigsRestricted)) {
                 callForwardingPref.setIntent(
                         subInfoHelper.getIntent(CallForwardType.class));
                 callForwardingPref.setEnabled(isAirplaneModeOff);
@@ -122,7 +124,8 @@ public class GsmUmtsCallOptions extends PreferenceActivity {
                     CarrierConfigManager.KEY_ADDITIONAL_SETTINGS_CALL_WAITING_VISIBILITY_BOOL)
                     || b.getBoolean(
                     CarrierConfigManager.KEY_ADDITIONAL_SETTINGS_CALLER_ID_VISIBILITY_BOOL)) &&
-                    !mobileNetworkConfigsRestricted) {
+                    (!Flags.ensureAccessToCallSettingsIsRestricted() ||
+                            !mobileNetworkConfigsRestricted)) {
                 additionalGsmSettingsPref.setIntent(
                         subInfoHelper.getIntent(GsmUmtsAdditionalCallOptions.class));
                 additionalGsmSettingsPref.setEnabled(isAirplaneModeOff);
@@ -134,7 +137,8 @@ public class GsmUmtsCallOptions extends PreferenceActivity {
         Preference callBarringPref = prefScreen.findPreference(CALL_BARRING_KEY);
         if (callBarringPref != null) {
             if (b != null && b.getBoolean(CarrierConfigManager.KEY_CALL_BARRING_VISIBILITY_BOOL) &&
-                    !mobileNetworkConfigsRestricted) {
+                    (!Flags.ensureAccessToCallSettingsIsRestricted() ||
+                            !mobileNetworkConfigsRestricted)) {
                 callBarringPref.setIntent(subInfoHelper.getIntent(GsmUmtsCallBarringOptions.class));
                 callBarringPref.setEnabled(isAirplaneModeOff);
             } else {

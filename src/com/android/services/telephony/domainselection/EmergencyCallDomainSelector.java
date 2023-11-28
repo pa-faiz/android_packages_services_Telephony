@@ -53,6 +53,7 @@ import static android.telephony.NetworkRegistrationInfo.REGISTRATION_STATE_HOME;
 import static android.telephony.NetworkRegistrationInfo.REGISTRATION_STATE_ROAMING;
 import static android.telephony.PreciseDisconnectCause.EMERGENCY_PERM_FAILURE;
 import static android.telephony.PreciseDisconnectCause.EMERGENCY_TEMP_FAILURE;
+import static android.telephony.PreciseDisconnectCause.SERVICE_OPTION_NOT_AVAILABLE;
 
 import android.annotation.NonNull;
 import android.content.Context;
@@ -170,6 +171,7 @@ public class EmergencyCallDomainSelector extends DomainSelectorBase
 
     private CancellationSignal mCancelSignal;
 
+    // Members for carrier configuration
     private @RadioAccessNetworkType int[] mImsRatsConfig;
     private @RadioAccessNetworkType int[] mCsRatsConfig;
     private @RadioAccessNetworkType int[] mImsRoamRatsConfig;
@@ -179,8 +181,6 @@ public class EmergencyCallDomainSelector extends DomainSelectorBase
     private List<String> mCdmaPreferredNumbers;
     private boolean mPreferImsWhenCallsOnCs;
     private int mVoWifiRequiresCondition;
-    private boolean mIsMonitoringConnectivity;
-    private boolean mWiFiAvailable;
     private int mScanTimeout;
     private int mMaxCellularTimeout;
     private int mMaxNumOfVoWifiTries;
@@ -190,6 +190,11 @@ public class EmergencyCallDomainSelector extends DomainSelectorBase
     private boolean mRequiresImsRegistration;
     private boolean mRequiresVoLteEnabled;
     private boolean mLtePreferredAfterNrFailure;
+
+    // Members for states
+    private boolean mIsMonitoringConnectivity;
+    private boolean mWiFiAvailable;
+    private boolean mWasCsfbAfterPsFailure;
     private boolean mTryCsWhenPsFails;
     private boolean mTryEpsFallback;
     private int mModemCount;
@@ -366,8 +371,18 @@ public class EmergencyCallDomainSelector extends DomainSelectorBase
             // Dial CS for CSFB instead of scanning with CS preferred network list.
             logi("reselectDomain tryCs=" + accessNetworkTypeToString(mCsNetworkType));
             if (mCsNetworkType != UNKNOWN) {
+                mWasCsfbAfterPsFailure = true;
                 onWwanNetworkTypeSelected(mCsNetworkType);
                 return;
+            }
+        }
+
+        if (mWasCsfbAfterPsFailure) {
+            mWasCsfbAfterPsFailure = false;
+            if (cause == SERVICE_OPTION_NOT_AVAILABLE) {
+                // b/299875872, combined attach but EXTENDED_SERVICE_REQUEST failed.
+                // Try CS preferred scan instead of PS preferred scan.
+                mLastNetworkType = EUTRAN;
             }
         }
 
@@ -466,6 +481,12 @@ public class EmergencyCallDomainSelector extends DomainSelectorBase
         mIsVoiceCapable = mImsStateTracker.isImsVoiceCapable();
         logi("onImsMmTelCapabilitiesChanged " + mIsVoiceCapable);
         selectDomain();
+    }
+
+    private boolean isSimReady() {
+        if (!SubscriptionManager.isValidSubscriptionId(getSubId())) return false;
+        TelephonyManager tm = mContext.getSystemService(TelephonyManager.class);
+        return tm.getSimState(getSlotId()) == TelephonyManager.SIM_STATE_READY;
     }
 
     /**
@@ -1017,13 +1038,13 @@ public class EmergencyCallDomainSelector extends DomainSelectorBase
      * @return {@code true} if emergency call over Wi-Fi allowed.
      */
     private boolean isEmcOverWifiSupported() {
-        if (SubscriptionManager.isValidSubscriptionId(getSubId())) {
+        if (isSimReady()) {
             List<Integer> domains = getDomainPreference();
             boolean ret = domains.contains(DOMAIN_PS_NON_3GPP);
             logi("isEmcOverWifiSupported " + ret);
             return ret;
         } else {
-            logi("isEmcOverWifiSupported invalid subId");
+            logi("isEmcOverWifiSupported invalid subId or lock state");
         }
         return false;
     }
