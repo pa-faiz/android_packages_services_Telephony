@@ -57,6 +57,7 @@ import static android.telephony.PreciseDisconnectCause.SERVICE_OPTION_NOT_AVAILA
 
 import android.annotation.NonNull;
 import android.content.Context;
+import android.content.res.Resources;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
@@ -89,6 +90,7 @@ import android.text.TextUtils;
 import android.util.LocalLog;
 
 import com.android.internal.annotations.VisibleForTesting;
+import com.android.phone.R;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -117,17 +119,7 @@ public class EmergencyCallDomainSelector extends DomainSelectorBase
 
     private static final LocalLog sLocalLog = new LocalLog(LOG_SIZE);
 
-    private static final ArrayList<String> sAllowOnlyWithSimReady = new ArrayList<>();
-
-    static {
-        // b/177967010, JP
-        sAllowOnlyWithSimReady.add("jp"); // Japan
-        // b/198393826, DE
-        sAllowOnlyWithSimReady.add("de"); // Germany
-        // b/230443699, IN and SG
-        sAllowOnlyWithSimReady.add("in"); // India
-        sAllowOnlyWithSimReady.add("sg"); // Singapore
-    }
+    private static List<String> sSimReadyAllowList;
 
     /**
      * Network callback used to determine whether Wi-Fi is connected or not.
@@ -449,6 +441,7 @@ public class EmergencyCallDomainSelector extends DomainSelectorBase
 
     private void startDomainSelection() {
         logi("startDomainSelection modemCount=" + mModemCount);
+        readResourceConfiguration();
         updateCarrierConfiguration();
         mDomainSelectionRequested = true;
         startCrossStackTimer();
@@ -503,8 +496,9 @@ public class EmergencyCallDomainSelector extends DomainSelectorBase
                 b.getIntArray(KEY_EMERGENCY_OVER_IMS_SUPPORTED_3GPP_NETWORK_TYPES_INT_ARRAY);
         mImsRoamRatsConfig = b.getIntArray(
                 KEY_EMERGENCY_OVER_IMS_ROAMING_SUPPORTED_3GPP_NETWORK_TYPES_INT_ARRAY);
-        if (!SubscriptionManager.isValidSubscriptionId(getSubId())) {
-            // Default configuration includes only EUTRAN . In case of no SIM, add NGRAN.
+        if (!isSimReady()) {
+            // Default configuration includes only EUTRAN.
+            // In case of no SIM or SIM locked state, add NGRAN.
             mImsRatsConfig = new int[] { EUTRAN, NGRAN };
             mImsRoamRatsConfig = new int[] { EUTRAN, NGRAN };
         }
@@ -575,6 +569,32 @@ public class EmergencyCallDomainSelector extends DomainSelectorBase
         } else {
             mScanType = DomainSelectionService.SCAN_TYPE_NO_PREFERENCE;
         }
+    }
+
+    /**
+     * Caches the resource configuration.
+     */
+    private void readResourceConfiguration() {
+        if (sSimReadyAllowList != null) return;
+        try {
+            sSimReadyAllowList = Arrays.asList(mContext.getResources().getStringArray(
+                    R.array.config_countries_require_sim_for_emergency));
+        } catch (Resources.NotFoundException nfe) {
+            loge("readResourceConfiguration exception=" + nfe);
+        } catch (NullPointerException npe) {
+            loge("readResourceConfiguration exception=" + npe);
+        } finally {
+            if (sSimReadyAllowList == null) {
+                sSimReadyAllowList = new ArrayList<String>();
+            }
+        }
+        logi("readResourceConfiguration simReadyCountries=" + sSimReadyAllowList);
+    }
+
+    /** For test purpose only */
+    @VisibleForTesting
+    public void clearResourceConfiguration() {
+        sSimReadyAllowList = null;
     }
 
     private void selectDomain() {
@@ -1335,7 +1355,7 @@ public class EmergencyCallDomainSelector extends DomainSelectorBase
         }
 
         String iso = regResult.getIso();
-        if (sAllowOnlyWithSimReady.contains(iso)) {
+        if (sSimReadyAllowList.contains(iso)) {
             TelephonyManager tm = mContext.getSystemService(TelephonyManager.class);
             int simState = tm.getSimState(getSlotId());
             if (simState != TelephonyManager.SIM_STATE_READY) {
