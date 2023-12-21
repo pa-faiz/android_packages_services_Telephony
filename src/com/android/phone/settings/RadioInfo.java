@@ -142,6 +142,8 @@ import androidx.appcompat.app.AppCompatActivity;
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneFactory;
 import com.android.internal.telephony.euicc.EuiccConnector;
+import com.android.internal.telephony.flags.FeatureFlags;
+import com.android.internal.telephony.flags.FeatureFlagsImpl;
 import com.android.internal.telephony.util.TelephonyUtils;
 import com.android.phone.R;
 
@@ -352,6 +354,8 @@ public class RadioInfo extends AppCompatActivity {
     private int mCellInfoRefreshRateIndex;
     private int mSelectedPhoneIndex;
     private boolean isExtServiceConnected = false;
+
+    private FeatureFlags mFeatureFlags;
 
     private final NetworkRequest mDefaultNetworkRequest = new NetworkRequest.Builder()
             .addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR)
@@ -582,6 +586,8 @@ public class RadioInfo extends AppCompatActivity {
         setContentView(R.layout.radio_info);
 
         log("Started onCreate");
+
+        mFeatureFlags = new FeatureFlagsImpl();
 
         mQueuedWork = new ThreadPoolExecutor(1, 1, RUNNABLE_TIMEOUT_MS, TimeUnit.MICROSECONDS,
                 new LinkedBlockingDeque<Runnable>());
@@ -1699,6 +1705,9 @@ public class RadioInfo extends AppCompatActivity {
     };
 
     private boolean isRadioOn() {
+        if (mFeatureFlags.radioInfoIsRadioOn()) {
+            return mTelephonyManager.getRadioPowerState() == TelephonyManager.RADIO_POWER_ON;
+        }
         //FIXME: Replace with a TelephonyManager call
         return mPhone.getServiceState().getState() != ServiceState.STATE_POWER_OFF;
     }
