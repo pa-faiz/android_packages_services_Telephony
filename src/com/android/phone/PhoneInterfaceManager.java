@@ -153,6 +153,8 @@ import android.telephony.satellite.ISatelliteDatagramCallback;
 import android.telephony.satellite.ISatelliteProvisionStateCallback;
 import android.telephony.satellite.ISatelliteStateCallback;
 import android.telephony.satellite.ISatelliteTransmissionUpdateCallback;
+import android.telephony.satellite.NtnSignalStrength;
+import android.telephony.satellite.NtnSignalStrengthCallback;
 import android.telephony.satellite.SatelliteCapabilities;
 import android.telephony.satellite.SatelliteDatagram;
 import android.telephony.satellite.SatelliteDatagramCallback;
@@ -399,6 +401,8 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
 
     // Toggling null cipher and integrity support was added in IRadioNetwork 2.1
     private static final int MIN_NULL_CIPHER_AND_INTEGRITY_VERSION = 201;
+    // Cellular identifier disclosure transparency was added in IRadioNetwork 2.2
+    private static final int MIN_IDENTIFIER_DISCLOSURE_VERSION = 202;
 
     /** The singleton instance. */
     private static PhoneInterfaceManager sInstance;
@@ -11950,6 +11954,18 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
         }
     }
 
+    private void checkForIdentifierDisclosureNotificationSupport() {
+        if (getHalVersion(HAL_SERVICE_NETWORK) < MIN_IDENTIFIER_DISCLOSURE_VERSION) {
+            throw new UnsupportedOperationException(
+                    "Cellular identifier disclosure transparency operations require HAL 2.2 or "
+                            + "above");
+        }
+        if (!getDefaultPhone().isIdentifierDisclosureTransparencySupported()) {
+            throw new UnsupportedOperationException(
+                    "Cellular identifier disclosure transparency operations unsupported by modem");
+        }
+    }
+
     /**
      * Get the SIM state for the slot index.
      * For Remote-SIMs, this method returns {@link IccCardConstants.State#UNKNOWN}
@@ -12556,22 +12572,27 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
     }
 
     /**
-     * Registers for NTN signal strength changed from satellite modem.
+     * Registers for NTN signal strength changed from satellite modem. If the registration operation
+     * is not successful, a {@link ServiceSpecificException} that contains
+     * {@link SatelliteManager.SatelliteResult} will be thrown.
      *
      * @param subId The subId of the subscription to request for.
-     * @param callback The callback to handle the NTN signal strength changed event.
+     * @param callback The callback to handle the NTN signal strength changed event. If the
+     * operation is successful, {@link NtnSignalStrengthCallback#onNtnSignalStrengthChanged(
+     * NtnSignalStrength)} will return an instance of {@link NtnSignalStrength} with a value of
+     * {@link NtnSignalStrength.NtnSignalStrengthLevel} when the signal strength of non-terrestrial
+     * network has changed.
      *
-     * @return The {@link SatelliteManager.SatelliteResult} result of the operation.
-     *
-     * @throws SecurityException if the caller doesn't have the required permission.
+     * @throws SecurityException If the caller doesn't have the required permission.
+     * @throws ServiceSpecificException If the callback registration operation fails.
      */
     @Override
-    @SatelliteManager.SatelliteResult public int registerForNtnSignalStrengthChanged(
-            int subId, @NonNull INtnSignalStrengthCallback callback) {
+    public void registerForNtnSignalStrengthChanged(int subId,
+            @NonNull INtnSignalStrengthCallback callback) throws RemoteException {
         enforceSatelliteCommunicationPermission("registerForNtnSignalStrengthChanged");
         final long identity = Binder.clearCallingIdentity();
         try {
-            return mSatelliteController.registerForNtnSignalStrengthChanged(subId, callback);
+            mSatelliteController.registerForNtnSignalStrengthChanged(subId, callback);
         } finally {
             Binder.restoreCallingIdentity(identity);
         }
@@ -12781,6 +12802,46 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
                 "setShouldSendDatagramToModemInDemoMode");
         return mSatelliteController.setShouldSendDatagramToModemInDemoMode(
                 shouldSendToModemInDemoMode);
+    }
+
+    /**
+     * Enable or disable notifications sent for cellular identifier disclosure events.
+     *
+     * Disclosure events are defined as instances where a device has sent a cellular identifier
+     * on the Non-access stratum (NAS) before a security context is established. As a result the
+     * identifier is sent in the clear, which has privacy implications for the user.
+     *
+     * @param enable if notifications about disclosure events should be enabled
+     * @throws SecurityException             if the caller does not have the required privileges
+     * @throws UnsupportedOperationException if the modem does not support this feature.
+     */
+    @RequiresPermission(Manifest.permission.MODIFY_PHONE_STATE)
+    public void enableCellularIdentifierDisclosureNotifications(boolean enable) {
+        enforceModifyPermission();
+        checkForIdentifierDisclosureNotificationSupport();
+
+        SharedPreferences.Editor editor = mTelephonySharedPreferences.edit();
+        editor.putBoolean(Phone.PREF_IDENTIFIER_DISCLOSURE_NOTIFICATIONS_ENABLED, enable);
+        editor.apply();
+
+        // Each phone instance is responsible for updating its respective modem immediately
+        // after we've made a preference change.
+        for (Phone phone : PhoneFactory.getPhones()) {
+            phone.handleIdentifierDisclosureNotificationPreferenceChange();
+        }
+    }
+
+    /**
+     * Get whether or not cellular identifier disclosure notifications are enabled.
+     *
+     * @throws SecurityException             if the caller does not have the required privileges
+     * @throws UnsupportedOperationException if the modem does not support this feature.
+     */
+    @RequiresPermission(Manifest.permission.READ_PRIVILEGED_PHONE_STATE)
+    public boolean isCellularIdentifierDisclosureNotificationEnabled() {
+        enforceReadPrivilegedPermission("isCellularIdentifierDisclosureNotificationEnabled");
+        checkForIdentifierDisclosureNotificationSupport();
+        return getDefaultPhone().getIdentifierDisclosureNotificationsPreferenceEnabled();
     }
 
     /**
