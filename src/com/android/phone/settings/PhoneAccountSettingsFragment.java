@@ -28,6 +28,7 @@ import android.text.TextUtils;
 import android.util.Log;
 
 import com.android.internal.telephony.Phone;
+import com.android.internal.telephony.flags.Flags;
 import com.android.phone.PhoneUtils;
 import com.android.phone.R;
 import com.android.phone.SubscriptionInfoHelper;
@@ -117,6 +118,9 @@ public class PhoneAccountSettingsFragment extends PreferenceFragment
             isXdivertAvailable = true;
         } catch (NameNotFoundException e) {
             Log.w(LOG_TAG, " com.qti.xdivert Vendor apk not available for ");
+        }
+        if (Flags.workProfileApiSplit()) {
+            mSubscriptionManager = mSubscriptionManager.createForAllUserProfiles();
         }
     }
 
