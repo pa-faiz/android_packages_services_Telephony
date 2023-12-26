@@ -86,6 +86,7 @@ import com.android.internal.telephony.d2d.RtpAdapter;
 import com.android.internal.telephony.d2d.RtpTransport;
 import com.android.internal.telephony.d2d.Timeouts;
 import com.android.internal.telephony.d2d.TransportProtocol;
+import com.android.internal.telephony.flags.Flags;
 import com.android.internal.telephony.gsm.SuppServiceNotification;
 import com.android.internal.telephony.imsphone.ImsPhone;
 import com.android.internal.telephony.imsphone.ImsPhoneCall;
@@ -1081,23 +1082,6 @@ abstract class TelephonyConnection extends Connection implements Holdable,
         mHandler.obtainMessage(MSG_HANGUP, android.telephony.DisconnectCause.LOCAL).sendToTarget();
     }
 
-    /**
-     * Notifies this Connection of a request to disconnect a participant of the conference managed
-     * by the connection.
-     *
-     * @param endpoint the {@link Uri} of the participant to disconnect.
-     */
-    @Override
-    public void onDisconnectConferenceParticipant(Uri endpoint) {
-        Log.v(this, "onDisconnectConferenceParticipant %s", endpoint);
-
-        if (mOriginalConnection == null) {
-            return;
-        }
-
-        mOriginalConnection.onDisconnectConferenceParticipant(endpoint);
-    }
-
     @Override
     public void onSeparate() {
         Log.v(this, "onSeparate");
@@ -1370,6 +1354,16 @@ abstract class TelephonyConnection extends Connection implements Holdable,
         originalConnection.sendRttModifyResponse(textStream);
     }
 
+    private boolean answeringDropsFgCalls() {
+        if (Flags.callExtraForNonHoldSupportedCarriers()) {
+            Bundle extras = getExtras();
+            if (extras != null) {
+                return extras.getBoolean(Connection.EXTRA_ANSWERING_DROPS_FG_CALL);
+            }
+        }
+        return false;
+    }
+
     public void performAnswer(int videoState) {
         Log.v(this, "performAnswer");
         if (isValidRingingCall() && getPhone() != null) {
@@ -1380,7 +1374,7 @@ abstract class TelephonyConnection extends Connection implements Holdable,
                         getPhoneAccountHandle());
             } else {
                 mTelephonyConnectionService.maybeDisconnectCallsOnOtherSubs(
-                            getPhoneAccountHandle());
+                            getPhoneAccountHandle(), answeringDropsFgCalls());
             }
             try {
                 getPhone().acceptCall(videoState);
