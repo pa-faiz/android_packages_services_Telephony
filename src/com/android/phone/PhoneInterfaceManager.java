@@ -10780,14 +10780,11 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
 
     /**
      * Get the current calling package name.
-     *
-     * @return the current calling package name, or null if there is no known package.
+     * @return the current calling package name
      */
     @Override
-    public @Nullable String getCurrentPackageName() {
-        PackageManager pm = mApp.getPackageManager();
-        String[] packageNames = pm == null ? null : pm.getPackagesForUid(Binder.getCallingUid());
-        return packageNames == null ? null : packageNames[0];
+    public String getCurrentPackageName() {
+        return mApp.getPackageManager().getPackagesForUid(Binder.getCallingUid())[0];
     }
 
     /**
