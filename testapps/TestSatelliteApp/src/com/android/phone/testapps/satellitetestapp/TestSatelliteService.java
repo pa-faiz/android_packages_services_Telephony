@@ -21,6 +21,8 @@ import android.annotation.Nullable;
 import android.content.Intent;
 import android.os.Binder;
 import android.os.IBinder;
+import android.telephony.IBooleanConsumer;
+import android.telephony.IIntegerConsumer;
 import android.telephony.satellite.AntennaDirection;
 import android.telephony.satellite.AntennaPosition;
 import android.telephony.satellite.SatelliteManager;
@@ -36,14 +38,13 @@ import android.telephony.satellite.stub.SatelliteResult;
 import android.telephony.satellite.stub.SatelliteService;
 import android.util.Log;
 
-import com.android.internal.telephony.IBooleanConsumer;
-import com.android.internal.telephony.IIntegerConsumer;
 import com.android.internal.util.FunctionalUtils;
 import com.android.telephony.Rlog;
 
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Test service for Satellite to verify end to end flow via testapp.
@@ -77,6 +78,8 @@ public class TestSatelliteService extends SatelliteImplBase {
     private final LocalBinder mBinder = new LocalBinder();
     @SatelliteResult
     private int mErrorCode = SatelliteResult.SATELLITE_RESULT_SUCCESS;
+    private final AtomicBoolean mShouldNotifyRemoteServiceConnected =
+            new AtomicBoolean(false);
 
     // For local access of this Service.
     class LocalBinder extends Binder {
@@ -389,6 +392,9 @@ public class TestSatelliteService extends SatelliteImplBase {
     public void setLocalSatelliteListener(@NonNull ILocalSatelliteListener listener) {
         logd("setLocalSatelliteListener: listener=" + listener);
         mLocalListener = listener;
+        if (mShouldNotifyRemoteServiceConnected.get()) {
+            notifyRemoteServiceConnected();
+        }
     }
 
     public void setErrorCode(@SatelliteResult int errorCode) {
@@ -494,7 +500,12 @@ public class TestSatelliteService extends SatelliteImplBase {
 
     private void notifyRemoteServiceConnected() {
         logd("notifyRemoteServiceConnected");
-        runWithExecutor(() -> mLocalListener.onRemoteServiceConnected());
+        if (mLocalListener != null) {
+            runWithExecutor(() -> mLocalListener.onRemoteServiceConnected());
+            mShouldNotifyRemoteServiceConnected.set(false);
+        } else {
+            mShouldNotifyRemoteServiceConnected.set(true);
+        }
     }
 
     /**

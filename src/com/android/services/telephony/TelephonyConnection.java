@@ -1745,6 +1745,20 @@ abstract class TelephonyConnection extends Connection implements Holdable,
                     mOriginalConnection.getOrigDialString());
         }
 
+        // When a call is redialed as an emergency call, a handover may occur.
+        // In that case, mIsNetworkIdentifiedEmergencyCall is overwritten
+        // along with the Connection Property. The associated Call object
+        // is not similarly reset; once the call is an emergency call,
+        // then it is always an emergency call. Therefore, the
+        // Call object and Connection Property can disagree as
+        // to whether or not the call is an emergency call.
+        // To prevent that scenario, mIsNetworkIdentifiedEmergencyCall is
+        // cached here.
+        boolean isEmergency = false;
+        if (mOriginalConnection != null) {
+            isEmergency = mOriginalConnection.isNetworkIdentifiedEmergencyCall();
+        }
+
         clearOriginalConnection();
         mOriginalConnectionExtras.clear();
         mOriginalConnection = originalConnection;
@@ -1759,7 +1773,8 @@ abstract class TelephonyConnection extends Connection implements Holdable,
         // Set video state and capabilities
         setTelephonyVideoState(mOriginalConnection.getVideoState());
         setOriginalConnectionCapabilities(mOriginalConnection.getConnectionCapabilities());
-        setIsNetworkIdentifiedEmergencyCall(mOriginalConnection.isNetworkIdentifiedEmergencyCall());
+        setIsNetworkIdentifiedEmergencyCall(isEmergency ||
+                mOriginalConnection.isNetworkIdentifiedEmergencyCall());
         setIsAdhocConferenceCall(mOriginalConnection.isAdhocConference());
         setAudioModeIsVoip(mOriginalConnection.getAudioModeIsVoip());
         setTelephonyVideoProvider(mOriginalConnection.getVideoProvider());
@@ -2724,8 +2739,8 @@ abstract class TelephonyConnection extends Connection implements Holdable,
                             }
                         }
 
-                        if (mTelephonyConnectionService.maybeReselectDomain(this,
-                                  mOriginalConnection.getPreciseDisconnectCause(), reasonInfo)) {
+                        if (mTelephonyConnectionService.maybeReselectDomain(this, reasonInfo,
+                                mShowPreciseFailedCause, mHangupDisconnectCause)) {
                             clearOriginalConnection();
                             break;
                         }
