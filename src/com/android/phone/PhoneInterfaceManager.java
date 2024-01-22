@@ -23,6 +23,9 @@ import static android.permission.flags.Flags.opEnableMobileDataByUser;
 import static android.telephony.TelephonyManager.ENABLE_FEATURE_MAPPING;
 import static android.telephony.TelephonyManager.HAL_SERVICE_NETWORK;
 import static android.telephony.TelephonyManager.HAL_SERVICE_RADIO;
+import static android.telephony.satellite.SatelliteManager.KEY_SATELLITE_COMMUNICATION_ALLOWED;
+import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_ACCESS_BARRED;
+import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_SUCCESS;
 
 import static com.android.internal.telephony.PhoneConstants.PHONE_TYPE_CDMA;
 import static com.android.internal.telephony.PhoneConstants.PHONE_TYPE_GSM;
@@ -153,8 +156,8 @@ import android.telephony.ims.stub.ImsRegistrationImplBase;
 import android.telephony.satellite.INtnSignalStrengthCallback;
 import android.telephony.satellite.ISatelliteCapabilitiesCallback;
 import android.telephony.satellite.ISatelliteDatagramCallback;
+import android.telephony.satellite.ISatelliteModemStateCallback;
 import android.telephony.satellite.ISatelliteProvisionStateCallback;
-import android.telephony.satellite.ISatelliteStateCallback;
 import android.telephony.satellite.ISatelliteTransmissionUpdateCallback;
 import android.telephony.satellite.NtnSignalStrength;
 import android.telephony.satellite.NtnSignalStrengthCallback;
@@ -210,6 +213,7 @@ import com.android.internal.telephony.ServiceStateTracker;
 import com.android.internal.telephony.SmsApplication;
 import com.android.internal.telephony.SmsController;
 import com.android.internal.telephony.SmsPermissions;
+import com.android.internal.telephony.TelephonyCountryDetector;
 import com.android.internal.telephony.TelephonyIntents;
 import com.android.internal.telephony.TelephonyPermissions;
 import com.android.internal.telephony.data.DataUtils;
@@ -243,6 +247,7 @@ import com.android.internal.util.HexDump;
 import com.android.phone.callcomposer.CallComposerPictureManager;
 import com.android.phone.callcomposer.CallComposerPictureTransfer;
 import com.android.phone.callcomposer.ImageData;
+import com.android.phone.satellite.accesscontrol.SatelliteAccessController;
 import com.android.phone.settings.PickSmsSubscriptionActivity;
 import com.android.phone.slice.SlicePurchaseController;
 import com.android.phone.utils.CarrierAllowListInfo;
@@ -406,6 +411,8 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
     private static final int MIN_NULL_CIPHER_AND_INTEGRITY_VERSION = 201;
     // Cellular identifier disclosure transparency was added in IRadioNetwork 2.2
     private static final int MIN_IDENTIFIER_DISCLOSURE_VERSION = 202;
+    // Null cipher notification support was added in IRadioNetwork 2.2
+    private static final int MIN_NULL_CIPHER_NOTIFICATION_VERSION = 202;
 
     /** The singleton instance. */
     private static PhoneInterfaceManager sInstance;
@@ -417,6 +424,7 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
     private final ImsResolver mImsResolver;
 
     private final SatelliteController mSatelliteController;
+    private final SatelliteAccessController mSatelliteAccessController;
     private final UserManager mUserManager;
     private final AppOpsManager mAppOps;
     private final MainThreadHandler mMainThreadHandler;
@@ -2464,6 +2472,8 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
         mRadioInterfaceCapabilities = RadioInterfaceCapabilityController.getInstance();
         mNotifyUserActivity = new AtomicBoolean(false);
         mPackageManager = app.getPackageManager();
+        mSatelliteAccessController = SatelliteAccessController.getOrCreateInstance(
+                getDefaultPhone().getContext(), featureFlags);
         PropertyInvalidatedCache.invalidateCache(TelephonyManager.CACHE_KEY_PHONE_ACCOUNT_TO_SUBID);
         publish();
         CarrierAllowListInfo.loadInstance(mApp);
@@ -12649,6 +12659,27 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
         return result;
     }
 
+    /**
+     * Get the aggregated satellite plmn list. This API collects plmn data from multiple sources,
+     * including carrier config, entitlement server, and config update.
+     *
+     * @param subId subId The subscription ID of the carrier.
+     *
+     * @return List of plmns for carrier satellite service. If no plmn is available, empty list will
+     * be returned.
+     *
+     * @throws SecurityException if the caller doesn't have the required permission.
+     */
+    @NonNull public List<String> getAllSatellitePlmnsForCarrier(int subId) {
+        enforceSatelliteCommunicationPermission("getAllSatellitePlmnsForCarrier");
+        final long identity = Binder.clearCallingIdentity();
+        try {
+            return mSatelliteController.getAllSatellitePlmnsForCarrier(subId);
+        } finally {
+            Binder.restoreCallingIdentity(identity);
+        }
+    }
+
     @Override
     public void setVoiceServiceStateOverride(int subId, boolean hasService, String callingPackage) {
         // Only telecom (and shell, for CTS purposes) is allowed to call this method.
@@ -12798,6 +12829,17 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
         if (!getDefaultPhone().isIdentifierDisclosureTransparencySupported()) {
             throw new UnsupportedOperationException(
                     "Cellular identifier disclosure transparency operations unsupported by modem");
+        }
+    }
+
+    private void checkForNullCipherNotificationSupport() {
+        if (getHalVersion(HAL_SERVICE_NETWORK) < MIN_NULL_CIPHER_NOTIFICATION_VERSION) {
+            throw new UnsupportedOperationException(
+                    "Null cipher notification operations require HAL 2.2 or above");
+        }
+        if (!getDefaultPhone().isNullCipherNotificationSupported()) {
+            throw new UnsupportedOperationException(
+                    "Null cipher notification operations unsupported by modem");
         }
     }
 
@@ -12970,8 +13012,34 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
     public void requestSatelliteEnabled(int subId, boolean enableSatellite, boolean enableDemoMode,
             @NonNull IIntegerConsumer callback) {
         enforceSatelliteCommunicationPermission("requestSatelliteEnabled");
-        mSatelliteController.requestSatelliteEnabled(subId, enableSatellite, enableDemoMode,
-                callback);
+        ResultReceiver resultReceiver = new ResultReceiver(mMainThreadHandler) {
+            @Override
+            protected void onReceiveResult(int resultCode, Bundle resultData) {
+                Log.d(LOG_TAG, "Satellite access restriction resultCode=" + resultCode
+                        + ", resultData=" + resultData);
+                boolean isAllowed = false;
+                Consumer<Integer> result = FunctionalUtils.ignoreRemoteException(callback::accept);
+                if (resultCode == SATELLITE_RESULT_SUCCESS) {
+                    if (resultData != null
+                            && resultData.containsKey(KEY_SATELLITE_COMMUNICATION_ALLOWED)) {
+                        isAllowed = resultData.getBoolean(KEY_SATELLITE_COMMUNICATION_ALLOWED);
+                    } else {
+                        loge("KEY_SATELLITE_COMMUNICATION_ALLOWED does not exist.");
+                    }
+                } else {
+                    result.accept(resultCode);
+                    return;
+                }
+                if (isAllowed) {
+                    mSatelliteController.requestSatelliteEnabled(
+                            subId, enableSatellite, enableDemoMode, callback);
+                } else {
+                    result.accept(SATELLITE_RESULT_ACCESS_BARRED);
+                }
+            }
+        };
+        mSatelliteAccessController.requestIsSatelliteCommunicationAllowedForCurrentLocation(
+                subId, resultReceiver);
     }
 
     /**
@@ -13175,7 +13243,7 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
      */
     @Override
     @SatelliteManager.SatelliteResult public int registerForSatelliteModemStateChanged(int subId,
-            @NonNull ISatelliteStateCallback callback) {
+            @NonNull ISatelliteModemStateCallback callback) {
         enforceSatelliteCommunicationPermission("registerForSatelliteModemStateChanged");
         return mSatelliteController.registerForSatelliteModemStateChanged(subId, callback);
     }
@@ -13186,13 +13254,13 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
      *
      * @param subId The subId of the subscription to unregister for satellite modem state changed.
      * @param callback The callback that was passed to
-     *                 {@link #registerForSatelliteModemStateChanged(int, ISatelliteStateCallback)}.
+     * {@link #registerForSatelliteModemStateChanged(int, ISatelliteModemStateCallback)}.
      *
      * @throws SecurityException if the caller doesn't have the required permission.
      */
     @Override
     public void unregisterForSatelliteModemStateChanged(int subId,
-            @NonNull ISatelliteStateCallback callback) {
+            @NonNull ISatelliteModemStateCallback callback) {
         enforceSatelliteCommunicationPermission("unregisterForSatelliteModemStateChanged");
         mSatelliteController.unregisterForSatelliteModemStateChanged(subId, callback);
     }
@@ -13292,8 +13360,8 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
             @NonNull ResultReceiver result) {
         enforceSatelliteCommunicationPermission(
                 "requestIsSatelliteCommunicationAllowedForCurrentLocation");
-        mSatelliteController.requestIsSatelliteCommunicationAllowedForCurrentLocation(subId,
-                result);
+        mSatelliteAccessController.requestIsSatelliteCommunicationAllowedForCurrentLocation(
+                subId, result);
     }
 
     /**
@@ -13625,6 +13693,55 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
     }
 
     /**
+     * This API should be used by only CTS tests to forcefully set telephony country codes.
+     *
+     * @return {@code true} if the country code is set successfully, {@code false} otherwise.
+     */
+    public boolean setCountryCodes(boolean reset, List<String> currentNetworkCountryCodes,
+            Map cachedNetworkCountryCodes, String locationCountryCode,
+            long locationCountryCodeTimestampNanos) {
+        Log.d(LOG_TAG, "setCountryCodes: currentNetworkCountryCodes="
+                + String.join(", ", currentNetworkCountryCodes)
+                + ", locationCountryCode=" + locationCountryCode
+                + ", locationCountryCodeTimestampNanos" + locationCountryCodeTimestampNanos
+                + ", reset=" + reset + ", cachedNetworkCountryCodes="
+                + String.join(", ", cachedNetworkCountryCodes.keySet()));
+        TelephonyPermissions.enforceShellOnly(
+                Binder.getCallingUid(), "setCachedLocationCountryCode");
+        TelephonyPermissions.enforceCallingOrSelfModifyPermissionOrCarrierPrivilege(mApp,
+                SubscriptionManager.INVALID_SUBSCRIPTION_ID,
+                "setCachedLocationCountryCode");
+        return TelephonyCountryDetector.getInstance(getDefaultPhone().getContext()).setCountryCodes(
+                reset, currentNetworkCountryCodes, cachedNetworkCountryCodes, locationCountryCode,
+                locationCountryCodeTimestampNanos);
+    }
+
+    /**
+     * This API should be used by only CTS tests to override the overlay configs of satellite
+     * access controller.
+     *
+     * @param reset {@code true} mean the overridden configs should not be used, {@code false}
+     *              otherwise.
+     * @return {@code true} if the overlay configs are set successfully, {@code false} otherwise.
+     */
+    public boolean setSatelliteAccessControlOverlayConfigs(boolean reset, boolean isAllowed,
+            String s2CellFile, long locationFreshDurationNanos,
+            List<String> satelliteCountryCodes) {
+        Log.d(LOG_TAG, "setSatelliteAccessControlOverlayConfigs: reset=" + reset
+                + ", isAllowed" + isAllowed + ", s2CellFile=" + s2CellFile
+                + ", locationFreshDurationNanos=" + locationFreshDurationNanos
+                + ", satelliteCountryCodes=" + ((satelliteCountryCodes != null)
+                ? String.join(", ", satelliteCountryCodes) : null));
+        TelephonyPermissions.enforceShellOnly(
+                Binder.getCallingUid(), "setSatelliteAccessControlOverlayConfigs");
+        TelephonyPermissions.enforceCallingOrSelfModifyPermissionOrCarrierPrivilege(mApp,
+                SubscriptionManager.INVALID_SUBSCRIPTION_ID,
+                "setSatelliteAccessControlOverlayConfigs");
+        return mSatelliteAccessController.setSatelliteAccessControlOverlayConfigs(reset, isAllowed,
+                s2CellFile, locationFreshDurationNanos, satelliteCountryCodes);
+    }
+
+    /**
      * This API can be used by only CTS to override the cached value for the device overlay config
      * value : config_send_satellite_datagram_to_modem_in_demo_mode, which determines whether
      * outgoing satellite datagrams should be sent to modem in demo mode.
@@ -13688,6 +13805,49 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
         enforceReadPrivilegedPermission("isCellularIdentifierDisclosureNotificationEnabled");
         checkForIdentifierDisclosureNotificationSupport();
         return getDefaultPhone().getIdentifierDisclosureNotificationsPreferenceEnabled();
+    }
+
+    /**
+     * Enables or disables notifications sent when cellular null cipher or integrity algorithms
+     * are in use by the cellular modem.
+     *
+     * @throws IllegalStateException if the Telephony process is not currently available
+     * @throws SecurityException if the caller does not have the required privileges
+     * @throws UnsupportedOperationException if the modem does not support reporting on ciphering
+     * and integrity algorithms in use
+     * @hide
+     */
+    @RequiresPermission(Manifest.permission.MODIFY_PHONE_STATE)
+    public void setEnableNullCipherNotifications(boolean enable) {
+        enforceModifyPermission();
+        checkForNullCipherNotificationSupport();
+
+        SharedPreferences.Editor editor = mTelephonySharedPreferences.edit();
+        editor.putBoolean(Phone.PREF_NULL_CIPHER_NOTIFICATIONS_ENABLED, enable);
+        editor.apply();
+
+        // Each phone instance is responsible for updating its respective modem immediately
+        // after a preference change.
+        for (Phone phone : PhoneFactory.getPhones()) {
+            phone.handleNullCipherNotificationPreferenceChanged();
+        }
+    }
+
+    /**
+     * Get whether notifications are enabled for null cipher or integrity algorithms in use by the
+     * cellular modem.
+     *
+     * @throws IllegalStateException if the Telephony process is not currently available
+     * @throws SecurityException if the caller does not have the required privileges
+     * @throws UnsupportedOperationException if the modem does not support reporting on ciphering
+     * and integrity algorithms in use
+     * @hide
+     */
+    @RequiresPermission(Manifest.permission.READ_PRIVILEGED_PHONE_STATE)
+    public boolean isNullCipherNotificationsEnabled() {
+        enforceReadPrivilegedPermission("isNullCipherNotificationsEnabled");
+        checkForNullCipherNotificationSupport();
+        return getDefaultPhone().getNullCipherNotificationsPreferenceEnabled();
     }
 
     /**
