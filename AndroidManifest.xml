@@ -186,10 +186,6 @@
     <!-- Needed to register for UWB state changes for satellite communication -->
     <uses-permission android:name="android.permission.UWB_PRIVILEGED"/>
 
-    <permission android:name="com.android.phone.permission.ACCESS_LAST_KNOWN_CELL_ID"
-                android:label="Access last known cell identity."
-                android:protectionLevel="signature"/>
-
     <uses-permission android:name="com.qti.permission.BIND_QTI_IMS_SERVICE" />
     <uses-permission android:name="com.qualcomm.qti.permission.USE_EXT_TELEPHONY_SERVICE" />
     <uses-permission android:name="com.qti.permission.RECEIVE_SMS_CALLBACK_MODE" />
