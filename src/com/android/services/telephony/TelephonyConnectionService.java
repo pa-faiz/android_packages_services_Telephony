@@ -750,6 +750,13 @@ public class TelephonyConnectionService extends ConnectionService {
                 }
             };
 
+    private void clearNormalCallDomainSelectionConnection() {
+        if (mDomainSelectionConnection != null) {
+            mDomainSelectionConnection.finishSelection();
+            mDomainSelectionConnection = null;
+        }
+    }
+
     /**
      * A listener for calls.
      */
@@ -762,17 +769,15 @@ public class TelephonyConnectionService extends ConnectionService {
                     if (c != null) {
                         switch(c.getState()) {
                             case Connection.STATE_ACTIVE: {
-                                Log.d(LOG_TAG, "Call State->ACTIVE."
-                                        + "Clearing DomainSelectionConnection");
-                                if (mDomainSelectionConnection != null) {
-                                    mDomainSelectionConnection.finishSelection();
-                                    mDomainSelectionConnection = null;
-                                }
+                                clearNormalCallDomainSelectionConnection();
                                 mNormalCallConnection = null;
                             }
                             break;
 
                             case Connection.STATE_DISCONNECTED: {
+                                // Clear connection if the call state changes from
+                                // DIALING -> DISCONNECTED without ACTIVE State.
+                                clearNormalCallDomainSelectionConnection();
                                 c.removeTelephonyConnectionListener(mNormalCallConnectionListener);
                             }
                             break;
@@ -3040,6 +3045,7 @@ public class TelephonyConnectionService extends ConnectionService {
                     mNormalCallConnection.setTelephonyConnectionDisconnected(mDisconnectCauseFactory
                             .toTelecomDisconnectCause(telephonyDisconnectCause,
                                     "Connection is null", phone.getPhoneId()));
+                    clearNormalCallDomainSelectionConnection();
                     mNormalCallConnection.close();
                     return;
                 }
@@ -3067,10 +3073,7 @@ public class TelephonyConnectionService extends ConnectionService {
                             e.getMessage(), phone.getPhoneId()));
             mNormalCallConnection.close();
         }
-        if (mDomainSelectionConnection != null) {
-            mDomainSelectionConnection.finishSelection();
-            mDomainSelectionConnection = null;
-        }
+        clearNormalCallDomainSelectionConnection();
         mNormalCallConnection = null;
     }
 
@@ -3310,10 +3313,7 @@ public class TelephonyConnectionService extends ConnectionService {
                             && extraCode == ImsReasonInfo.EXTRA_CODE_CALL_RETRY_EMERGENCY)) {
                 // clear normal call domain selector
                 c.removeTelephonyConnectionListener(mNormalCallConnectionListener);
-                if (mDomainSelectionConnection != null) {
-                    mDomainSelectionConnection.finishSelection();
-                    mDomainSelectionConnection = null;
-                }
+                clearNormalCallDomainSelectionConnection();
                 mNormalCallConnection = null;
 
                 onEmergencyRedial(c, c.getPhone().getDefaultPhone());
@@ -3509,10 +3509,7 @@ public class TelephonyConnectionService extends ConnectionService {
         }
 
         c.removeTelephonyConnectionListener(mTelephonyConnectionListener);
-        if (mDomainSelectionConnection != null) {
-            mDomainSelectionConnection.finishSelection();
-            mDomainSelectionConnection = null;
-        }
+        clearNormalCallDomainSelectionConnection();
         mNormalCallConnection = null;
         Log.d(LOG_TAG, "Reselect call domain not triggered.");
         return false;

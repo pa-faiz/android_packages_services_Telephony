@@ -248,6 +248,7 @@ import com.android.phone.callcomposer.CallComposerPictureManager;
 import com.android.phone.callcomposer.CallComposerPictureTransfer;
 import com.android.phone.callcomposer.ImageData;
 import com.android.phone.satellite.accesscontrol.SatelliteAccessController;
+import com.android.phone.satellite.entitlement.SatelliteEntitlementController;
 import com.android.phone.settings.PickSmsSubscriptionActivity;
 import com.android.phone.slice.SlicePurchaseController;
 import com.android.phone.utils.CarrierAllowListInfo;
@@ -2477,6 +2478,10 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
         PropertyInvalidatedCache.invalidateCache(TelephonyManager.CACHE_KEY_PHONE_ACCOUNT_TO_SUBID);
         publish();
         CarrierAllowListInfo.loadInstance(mApp);
+
+        // Create the SatelliteEntitlementController singleton, for using the get the
+        // entitlementStatus for satellite service.
+        SatelliteEntitlementController.make(mApp, mFeatureFlags);
     }
 
     @VisibleForTesting
@@ -12582,8 +12587,9 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
      * @return {@CellIdentity} last known cell identity {@CellIdentity}.
      *
      * Require {@link android.Manifest.permission#ACCESS_FINE_LOCATION} and
-     * com.android.phone.permission.ACCESS_LAST_KNOWN_CELL_ID, otherwise throws
+     * {@link android.Manifest.permission#ACCESS_LAST_KNOWN_CELL_ID}, otherwise throws
      * SecurityException.
+     *
      * If there is current registered network this value will be same as the registered cell
      * identity. If the device goes out of service the previous cell identity is cached and
      * will be returned. If the cache age of the Cell identity is more than 24 hours
