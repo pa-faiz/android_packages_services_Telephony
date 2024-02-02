@@ -208,6 +208,9 @@
         android:label="Broadcast essential records loaded"
         android:protectionLevel="signature|system"/>
 
+    <!-- Needed to bind the domain selection service. -->
+    <uses-permission android:name="android.permission.BIND_DOMAIN_SELECTION_SERVICE" />
+
     <application android:name="PhoneApp"
             android:persistent="true"
             android:label="@string/phoneAppLabel"
@@ -688,6 +691,14 @@
             android:multiprocess="false"
             android:singleUser="true"
             android:writePermission="android.permission.MODIFY_PHONE_STATE"/>
+
+        <service android:name="com.android.services.telephony.domainselection.TelephonyDomainSelectionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_DOMAIN_SELECTION_SERVICE">
+            <intent-filter>
+                <action android:name="android.telephony.DomainSelectionService"/>
+            </intent-filter>
+        </service>
 
         <uses-library android:name="ims-ext-common"/>
         <uses-library android:name="com.qti.extphone.extphonelib"/>
