@@ -12890,11 +12890,15 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
             long logcatStartTimestampMillis, boolean enableTelecomDump,
             boolean enableTelephonyDump) {
         DropBoxManager db = mApp.getSystemService(DropBoxManager.class);
-        TelephonyManager.EmergencyCallDiagnosticParams edp =
-                new TelephonyManager.EmergencyCallDiagnosticParams();
-        edp.setLogcatCollection(enableLogcat, logcatStartTimestampMillis);
-        edp.setTelephonyDumpSysCollection(enableTelephonyDump);
-        edp.setTelecomDumpSysCollection(enableTelecomDump);
+        TelephonyManager.EmergencyCallDiagnosticParams.Builder edpBuilder =
+                new TelephonyManager.EmergencyCallDiagnosticParams.Builder();
+        edpBuilder
+                .setTelecomDumpSysCollectionEnabled(enableTelecomDump)
+                .setTelephonyDumpSysCollectionEnabled(enableTelephonyDump);
+        if (enableLogcat) {
+            edpBuilder.setLogcatCollectionStartTimeMillis(logcatStartTimestampMillis);
+        }
+        TelephonyManager.EmergencyCallDiagnosticParams edp = edpBuilder.build();
         Log.d(LOG_TAG, "persisting with Params " + edp.toString());
         DiagnosticDataCollector ddc = new DiagnosticDataCollector(Runtime.getRuntime(),
                 Executors.newCachedThreadPool(), db,
@@ -13018,34 +13022,41 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
     public void requestSatelliteEnabled(int subId, boolean enableSatellite, boolean enableDemoMode,
             @NonNull IIntegerConsumer callback) {
         enforceSatelliteCommunicationPermission("requestSatelliteEnabled");
-        ResultReceiver resultReceiver = new ResultReceiver(mMainThreadHandler) {
-            @Override
-            protected void onReceiveResult(int resultCode, Bundle resultData) {
-                Log.d(LOG_TAG, "Satellite access restriction resultCode=" + resultCode
-                        + ", resultData=" + resultData);
-                boolean isAllowed = false;
-                Consumer<Integer> result = FunctionalUtils.ignoreRemoteException(callback::accept);
-                if (resultCode == SATELLITE_RESULT_SUCCESS) {
-                    if (resultData != null
-                            && resultData.containsKey(KEY_SATELLITE_COMMUNICATION_ALLOWED)) {
-                        isAllowed = resultData.getBoolean(KEY_SATELLITE_COMMUNICATION_ALLOWED);
+        if (enableSatellite) {
+            ResultReceiver resultReceiver = new ResultReceiver(mMainThreadHandler) {
+                @Override
+                protected void onReceiveResult(int resultCode, Bundle resultData) {
+                    Log.d(LOG_TAG, "Satellite access restriction resultCode=" + resultCode
+                            + ", resultData=" + resultData);
+                    boolean isAllowed = false;
+                    Consumer<Integer> result = FunctionalUtils.ignoreRemoteException(
+                            callback::accept);
+                    if (resultCode == SATELLITE_RESULT_SUCCESS) {
+                        if (resultData != null
+                                && resultData.containsKey(KEY_SATELLITE_COMMUNICATION_ALLOWED)) {
+                            isAllowed = resultData.getBoolean(KEY_SATELLITE_COMMUNICATION_ALLOWED);
+                        } else {
+                            loge("KEY_SATELLITE_COMMUNICATION_ALLOWED does not exist.");
+                        }
                     } else {
-                        loge("KEY_SATELLITE_COMMUNICATION_ALLOWED does not exist.");
+                        result.accept(resultCode);
+                        return;
                     }
-                } else {
-                    result.accept(resultCode);
-                    return;
+                    if (isAllowed) {
+                        mSatelliteController.requestSatelliteEnabled(
+                                subId, enableSatellite, enableDemoMode, callback);
+                    } else {
+                        result.accept(SATELLITE_RESULT_ACCESS_BARRED);
+                    }
                 }
-                if (isAllowed) {
-                    mSatelliteController.requestSatelliteEnabled(
-                            subId, enableSatellite, enableDemoMode, callback);
-                } else {
-                    result.accept(SATELLITE_RESULT_ACCESS_BARRED);
-                }
-            }
-        };
-        mSatelliteAccessController.requestIsSatelliteCommunicationAllowedForCurrentLocation(
-                subId, resultReceiver);
+            };
+            mSatelliteAccessController.requestIsSatelliteCommunicationAllowedForCurrentLocation(
+                    subId, resultReceiver);
+        } else {
+            // No need to check if satellite is allowed at current location when disabling satellite
+            mSatelliteController.requestSatelliteEnabled(
+                    subId, enableSatellite, enableDemoMode, callback);
+        }
     }
 
     /**
@@ -13696,6 +13707,25 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
                 "setEmergencyCallToSatelliteHandoverType");
         return mSatelliteController.setEmergencyCallToSatelliteHandoverType(
                 handoverType, delaySeconds);
+    }
+
+    /**
+     * This API can be used in only testing to override oem-enabled satellite provision status.
+     *
+     * @param reset {@code true} mean the overriding status should not be used, {@code false}
+     *              otherwise.
+     * @param isProvisioned The overriding provision status.
+     * @return {@code true} if the provision status is set successfully, {@code false} otherwise.
+     */
+    public boolean setOemEnabledSatelliteProvisionStatus(boolean reset, boolean isProvisioned) {
+        Log.d(LOG_TAG, "setOemEnabledSatelliteProvisionStatus - reset=" + reset
+                + ", isProvisioned=" + isProvisioned);
+        TelephonyPermissions.enforceShellOnly(
+                Binder.getCallingUid(), "setOemEnabledSatelliteProvisionStatus");
+        TelephonyPermissions.enforceCallingOrSelfModifyPermissionOrCarrierPrivilege(mApp,
+                SubscriptionManager.INVALID_SUBSCRIPTION_ID,
+                "setOemEnabledSatelliteProvisionStatus");
+        return mSatelliteController.setOemEnabledSatelliteProvisionStatus(reset, isProvisioned);
     }
 
     /**

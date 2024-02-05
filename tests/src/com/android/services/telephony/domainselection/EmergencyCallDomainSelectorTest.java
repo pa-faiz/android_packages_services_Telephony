@@ -16,6 +16,8 @@
 
 package com.android.services.telephony.domainselection;
 
+import static android.telephony.AccessNetworkConstants.TRANSPORT_TYPE_WLAN;
+import static android.telephony.AccessNetworkConstants.TRANSPORT_TYPE_WWAN;
 import static android.telephony.AccessNetworkConstants.AccessNetworkType.EUTRAN;
 import static android.telephony.AccessNetworkConstants.AccessNetworkType.GERAN;
 import static android.telephony.AccessNetworkConstants.AccessNetworkType.NGRAN;
@@ -53,6 +55,7 @@ import static android.telephony.NetworkRegistrationInfo.DOMAIN_PS;
 import static android.telephony.NetworkRegistrationInfo.REGISTRATION_STATE_HOME;
 import static android.telephony.NetworkRegistrationInfo.REGISTRATION_STATE_UNKNOWN;
 import static android.telephony.PreciseDisconnectCause.SERVICE_OPTION_NOT_AVAILABLE;
+import static android.telephony.TelephonyManager.DATA_CONNECTED;
 
 import static com.android.services.telephony.domainselection.EmergencyCallDomainSelector.MSG_MAX_CELLULAR_TIMEOUT;
 import static com.android.services.telephony.domainselection.EmergencyCallDomainSelector.MSG_NETWORK_SCAN_TIMEOUT;
@@ -69,6 +72,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -147,6 +151,7 @@ public class EmergencyCallDomainSelectorTest {
     @Mock private ProvisioningManager mProvisioningManager;
     @Mock private CrossSimRedialingController mCsrdCtrl;
     @Mock private CarrierConfigHelper mCarrierConfigHelper;
+    @Mock private EmergencyCallbackModeHelper mEcbmHelper;
     @Mock private Resources mResources;
 
     private Context mContext;
@@ -294,6 +299,26 @@ public class EmergencyCallDomainSelectorTest {
         verify(mWwanSelectorCallback, times(0)).onRequestEmergencyNetworkScan(
                 any(), anyInt(), any(), any());
         verify(mWwanSelectorCallback, times(0)).onDomainSelected(anyInt(), eq(true));
+    }
+
+    @Test
+    public void testDestroyed() throws Exception {
+        createSelector(SLOT_0_SUB_ID);
+
+        EmergencyRegResult regResult = getEmergencyRegResult(UTRAN, REGISTRATION_STATE_HOME,
+                NetworkRegistrationInfo.DOMAIN_CS,
+                true, true, 0, 0, "", "");
+        SelectionAttributes attr = getSelectionAttributes(SLOT_0, SLOT_0_SUB_ID, regResult);
+        mDomainSelector.selectDomain(attr, mTransportSelectorCallback);
+        processAllMessages();
+
+        bindImsServiceUnregistered();
+
+        mDomainSelector.destroy();
+        mDomainSelector.handleMessage(mDomainSelector.obtainMessage(Integer.MAX_VALUE));
+        unsolBarringInfoChanged(false);
+
+        verify(mTransportSelectorCallback, never()).onWwanSelected(any());
     }
 
     @Test
@@ -481,6 +506,39 @@ public class EmergencyCallDomainSelectorTest {
         processAllMessages();
 
         verifyScanCsPreferred();
+    }
+
+    @Test
+    public void testDefaultCombinedImsRegisteredSelectPsThenNotExtendedServiceRequestFails()
+            throws Exception {
+        createSelector(SLOT_0_SUB_ID);
+        unsolBarringInfoChanged(false);
+
+        EmergencyRegResult regResult = getEmergencyRegResult(EUTRAN, REGISTRATION_STATE_HOME,
+                NetworkRegistrationInfo.DOMAIN_CS | NetworkRegistrationInfo.DOMAIN_PS,
+                true, true, 0, 0, "", "");
+        SelectionAttributes attr = getSelectionAttributes(SLOT_0, SLOT_0_SUB_ID, regResult);
+        mDomainSelector.selectDomain(attr, mTransportSelectorCallback);
+        processAllMessages();
+
+        bindImsService();
+
+        verifyPsDialed();
+
+        mDomainSelector.reselectDomain(attr);
+        processAllMessages();
+
+        verifyCsDialed();
+
+        SelectionAttributes.Builder builder =
+                new SelectionAttributes.Builder(SLOT_0, SLOT_0_SUB_ID, SELECTOR_TYPE_CALLING)
+                .setEmergency(true)
+                .setEmergencyRegResult(regResult);
+        attr = builder.build();
+        mDomainSelector.reselectDomain(attr);
+        processAllMessages();
+
+        verifyScanPsPreferred();
     }
 
     @Test
@@ -1122,6 +1180,7 @@ public class EmergencyCallDomainSelectorTest {
         bundle.putBoolean(KEY_EMERGENCY_CALL_OVER_EMERGENCY_PDN_BOOL, true);
         when(mCarrierConfigManager.getConfigForSubId(anyInt())).thenReturn(bundle);
 
+        mResultConsumer = null;
         createSelector(SLOT_0_SUB_ID);
         unsolBarringInfoChanged(true);
 
@@ -1146,6 +1205,14 @@ public class EmergencyCallDomainSelectorTest {
         mDomainSelector.handleMessage(mDomainSelector.obtainMessage(MSG_NETWORK_SCAN_TIMEOUT));
 
         verify(mTransportSelectorCallback, times(1)).onWlanSelected(eq(true));
+
+        assertNotNull(mResultConsumer);
+
+        mResultConsumer.accept(regResult);
+        processAllMessages();
+
+        // Ignore the stale result
+        verify(mWwanSelectorCallback, never()).onDomainSelected(anyInt(), anyBoolean());
     }
 
     @Test
@@ -1340,6 +1407,36 @@ public class EmergencyCallDomainSelectorTest {
     }
 
     @Test
+    public void testDualSimInvalidSubscriptionAfterScan() throws Exception {
+        createSelector(SLOT_0_SUB_ID);
+        unsolBarringInfoChanged(false);
+        doReturn(2).when(mTelephonyManager).getActiveModemCount();
+        doReturn(TelephonyManager.SIM_STATE_PIN_REQUIRED)
+                .when(mTelephonyManager).getSimState(anyInt());
+        doReturn(true).when(mCsrdCtrl).isThereOtherSlot();
+        doReturn(new String[] {"jp"}).when(mResources).getStringArray(anyInt());
+
+        EmergencyRegResult regResult = getEmergencyRegResult(UNKNOWN, REGISTRATION_STATE_UNKNOWN,
+                0, false, false, 0, 0, "", "", "");
+        SelectionAttributes attr = getSelectionAttributes(SLOT_0, SLOT_0_SUB_ID, regResult);
+        mDomainSelector.selectDomain(attr, mTransportSelectorCallback);
+        processAllMessages();
+
+        bindImsServiceUnregistered();
+        processAllMessages();
+
+        assertNotNull(mResultConsumer);
+
+        regResult = getEmergencyRegResult(EUTRAN, REGISTRATION_STATE_UNKNOWN,
+                0, false, false, 0, 0, "", "", "jp");
+        mResultConsumer.accept(regResult);
+        processAllMessages();
+
+        verify(mTransportSelectorCallback, times(1))
+                .onSelectionTerminated(eq(DisconnectCause.EMERGENCY_PERM_FAILURE));
+    }
+
+    @Test
     public void testDualSimInvalidSubscriptionButNoOtherSlot() throws Exception {
         createSelector(SLOT_0_SUB_ID);
         unsolBarringInfoChanged(false);
@@ -1368,6 +1465,30 @@ public class EmergencyCallDomainSelectorTest {
         setupForHandleScanResult();
 
         EmergencyRegResult regResult = getEmergencyRegResult(EUTRAN, REGISTRATION_STATE_HOME,
+                DOMAIN_CS, false, false, 0, 0, "", "");
+        mResultConsumer.accept(regResult);
+        processAllMessages();
+
+        verifyCsDialed();
+    }
+
+    @Test
+    public void testEutranWithPsDomainOnly() throws Exception {
+        setupForHandleScanResult();
+
+        EmergencyRegResult regResult = getEmergencyRegResult(EUTRAN, REGISTRATION_STATE_HOME,
+                DOMAIN_PS, false, false, 0, 0, "", "");
+        mResultConsumer.accept(regResult);
+        processAllMessages();
+
+        verifyPsDialed();
+    }
+
+    @Test
+    public void testUtran() throws Exception {
+        setupForHandleScanResult();
+
+        EmergencyRegResult regResult = getEmergencyRegResult(UTRAN, REGISTRATION_STATE_HOME,
                 DOMAIN_CS, false, false, 0, 0, "", "");
         mResultConsumer.accept(regResult);
         processAllMessages();
@@ -1934,6 +2055,9 @@ public class EmergencyCallDomainSelectorTest {
         mDomainSelector.handleMessage(mDomainSelector.obtainMessage(MSG_MAX_CELLULAR_TIMEOUT));
         processAllMessages();
 
+        assertFalse(mDomainSelector.hasMessages(MSG_MAX_CELLULAR_TIMEOUT));
+        verify(mTransportSelectorCallback, times(1)).onWlanSelected(anyBoolean());
+
         mDomainSelector.reselectDomain(attr);
         processAllMessages();
 
@@ -2246,6 +2370,93 @@ public class EmergencyCallDomainSelectorTest {
         verifyCsDialed();
     }
 
+    @Test
+    public void testWhileInEcbmOnWwan() throws Exception {
+        createSelector(SLOT_0_SUB_ID);
+        unsolBarringInfoChanged(false);
+
+        doReturn(true).when(mEcbmHelper).isInEmergencyCallbackMode(anyInt());
+        doReturn(TRANSPORT_TYPE_WWAN).when(mEcbmHelper).getTransportType(anyInt());
+        doReturn(DATA_CONNECTED).when(mEcbmHelper).getDataConnectionState(anyInt());
+
+        EmergencyRegResult regResult = getEmergencyRegResult(UNKNOWN, REGISTRATION_STATE_UNKNOWN,
+                0, false, false, 0, 0, "", "");
+        SelectionAttributes attr = getSelectionAttributes(SLOT_0, SLOT_0_SUB_ID, regResult);
+        mDomainSelector.selectDomain(attr, mTransportSelectorCallback);
+        processAllMessages();
+
+        bindImsServiceUnregistered();
+        processAllMessages();
+
+        verify(mTransportSelectorCallback, never()).onWlanSelected(anyBoolean());
+        verify(mTransportSelectorCallback).onWwanSelected(any());
+    }
+
+    @Test
+    public void testWhileInEcbmOnWlanConnected() throws Exception {
+        createSelector(SLOT_0_SUB_ID);
+        unsolBarringInfoChanged(false);
+
+        doReturn(true).when(mEcbmHelper).isInEmergencyCallbackMode(anyInt());
+        doReturn(TRANSPORT_TYPE_WLAN).when(mEcbmHelper).getTransportType(anyInt());
+        doReturn(DATA_CONNECTED).when(mEcbmHelper).getDataConnectionState(anyInt());
+
+        EmergencyRegResult regResult = getEmergencyRegResult(UNKNOWN, REGISTRATION_STATE_UNKNOWN,
+                0, false, false, 0, 0, "", "");
+        SelectionAttributes attr = getSelectionAttributes(SLOT_0, SLOT_0_SUB_ID, regResult);
+        mDomainSelector.selectDomain(attr, mTransportSelectorCallback);
+        processAllMessages();
+
+        bindImsServiceUnregistered();
+        processAllMessages();
+
+        verify(mTransportSelectorCallback).onWlanSelected(anyBoolean());
+        verify(mTransportSelectorCallback, never()).onWwanSelected(any());
+    }
+
+    @Test
+    public void testWhileInEcbmOnWlanNotConnected() throws Exception {
+        createSelector(SLOT_0_SUB_ID);
+        unsolBarringInfoChanged(false);
+
+        doReturn(true).when(mEcbmHelper).isInEmergencyCallbackMode(anyInt());
+        doReturn(TRANSPORT_TYPE_WLAN).when(mEcbmHelper).getTransportType(anyInt());
+
+        EmergencyRegResult regResult = getEmergencyRegResult(UNKNOWN, REGISTRATION_STATE_UNKNOWN,
+                0, false, false, 0, 0, "", "");
+        SelectionAttributes attr = getSelectionAttributes(SLOT_0, SLOT_0_SUB_ID, regResult);
+        mDomainSelector.selectDomain(attr, mTransportSelectorCallback);
+        processAllMessages();
+
+        bindImsServiceUnregistered();
+        processAllMessages();
+
+        verify(mTransportSelectorCallback, never()).onWlanSelected(anyBoolean());
+        verify(mTransportSelectorCallback).onWwanSelected(any());
+    }
+
+    @Test
+    public void testNotInEcbmOnWlanConnected() throws Exception {
+        createSelector(SLOT_0_SUB_ID);
+        unsolBarringInfoChanged(false);
+
+        doReturn(false).when(mEcbmHelper).isInEmergencyCallbackMode(anyInt());
+        doReturn(TRANSPORT_TYPE_WLAN).when(mEcbmHelper).getTransportType(anyInt());
+        doReturn(DATA_CONNECTED).when(mEcbmHelper).getDataConnectionState(anyInt());
+
+        EmergencyRegResult regResult = getEmergencyRegResult(UNKNOWN, REGISTRATION_STATE_UNKNOWN,
+                0, false, false, 0, 0, "", "");
+        SelectionAttributes attr = getSelectionAttributes(SLOT_0, SLOT_0_SUB_ID, regResult);
+        mDomainSelector.selectDomain(attr, mTransportSelectorCallback);
+        processAllMessages();
+
+        bindImsServiceUnregistered();
+        processAllMessages();
+
+        verify(mTransportSelectorCallback, never()).onWlanSelected(anyBoolean());
+        verify(mTransportSelectorCallback).onWwanSelected(any());
+    }
+
     private void setupForScanListTest(PersistableBundle bundle) throws Exception {
         setupForScanListTest(bundle, false);
     }
@@ -2319,7 +2530,7 @@ public class EmergencyCallDomainSelectorTest {
     private void createSelector(int subId) throws Exception {
         mDomainSelector = new EmergencyCallDomainSelector(
                 mContext, SLOT_0, subId, mHandlerThread.getLooper(),
-                mImsStateTracker, mDestroyListener, mCsrdCtrl, mCarrierConfigHelper);
+                mImsStateTracker, mDestroyListener, mCsrdCtrl, mCarrierConfigHelper, mEcbmHelper);
         mDomainSelector.clearResourceConfiguration();
         replaceInstance(DomainSelectorBase.class,
                 "mWwanSelectorCallback", mDomainSelector, mWwanSelectorCallback);
