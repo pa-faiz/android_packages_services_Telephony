@@ -1030,7 +1030,7 @@ abstract class TelephonyConnection extends Connection implements Holdable,
     private Integer mEmergencyServiceCategory = null;
 
     protected TelephonyConnection(com.android.internal.telephony.Connection originalConnection,
-            String callId, @android.telecom.Call.Details.CallDirection int callDirection) {
+            String callId, int callDirection) {
         setCallDirection(callDirection);
         setTelecomCallId(callId);
         if (originalConnection != null) {

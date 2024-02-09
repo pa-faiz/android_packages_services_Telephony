@@ -79,11 +79,9 @@ import android.telephony.DomainSelectionService;
 import android.telephony.DomainSelectionService.SelectionAttributes;
 import android.telephony.EmergencyRegResult;
 import android.telephony.NetworkRegistrationInfo;
-import android.telephony.PhoneNumberUtils;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
 import android.telephony.TransportSelectorCallback;
-import android.telephony.emergency.EmergencyNumber;
 import android.telephony.ims.ImsManager;
 import android.telephony.ims.ImsMmTelManager;
 import android.telephony.ims.ProvisioningManager;
@@ -95,9 +93,7 @@ import com.android.phone.R;
 
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.function.IntFunction;
 
 /**
@@ -286,7 +282,7 @@ public class EmergencyCallDomainSelector extends DomainSelectorBase
                       && (mScanType == DomainSelectionService.SCAN_TYPE_FULL_SERVICE)) {
                 mScanType = DomainSelectionService.SCAN_TYPE_LIMITED_SERVICE;
                 mWwanSelectorCallback.onRequestEmergencyNetworkScan(
-                        mLastPreferredNetworks, mScanType, mCancelSignal,
+                        mLastPreferredNetworks, mScanType, false, mCancelSignal,
                         (regResult) -> {
                             logi("requestScan-onComplete");
                             sendMessage(obtainMessage(MSG_NETWORK_SCAN_RESULT, regResult));
@@ -327,12 +323,6 @@ public class EmergencyCallDomainSelector extends DomainSelectorBase
     }
 
     @Override
-    public void cancelSelection() {
-        logi("cancelSelection");
-        finishSelection();
-    }
-
-    @Override
     public void reselectDomain(SelectionAttributes attr) {
         logi("reselectDomain attr=" + attr);
         mSelectionAttributes = attr;
@@ -345,7 +335,6 @@ public class EmergencyCallDomainSelector extends DomainSelectorBase
         int cause = mSelectionAttributes.getCsDisconnectCause();
         mCrossSimRedialingController.notifyCallFailure(cause);
 
-        // TODO(b/258112541) make EMERGENCY_PERM_FAILURE and EMERGENCY_TEMP_FAILURE public api
         if (cause == EMERGENCY_PERM_FAILURE
                 || cause == EMERGENCY_TEMP_FAILURE) {
             logi("reselectDomain should redial on the other subscription");
@@ -356,11 +345,6 @@ public class EmergencyCallDomainSelector extends DomainSelectorBase
         if (mCrossStackTimerExpired) {
             logi("reselectDomain cross stack timer expired");
             terminateSelectionForCrossSimRedialing(false);
-            return;
-        }
-
-        if (mIsTestEmergencyNumber) {
-            selectDomainForTestEmergencyNumber();
             return;
         }
 
@@ -438,7 +422,7 @@ public class EmergencyCallDomainSelector extends DomainSelectorBase
         logi("selectDomain attr=" + attr);
         mTransportSelectorCallback = cb;
         mSelectionAttributes = attr;
-        mIsTestEmergencyNumber = isTestEmergencyNumber(attr.getNumber());
+        mIsTestEmergencyNumber = attr.isTestEmergencyNumber();
 
         TelephonyManager tm = mContext.getSystemService(TelephonyManager.class);
         mModemCount = tm.getActiveModemCount();
@@ -648,11 +632,6 @@ public class EmergencyCallDomainSelector extends DomainSelectorBase
     }
 
     private void selectDomainFromInitialState() {
-        if (mIsTestEmergencyNumber) {
-            selectDomainForTestEmergencyNumber();
-            return;
-        }
-
         boolean csInService = isCsInService();
         boolean psInService = isPsInService();
 
@@ -685,7 +664,8 @@ public class EmergencyCallDomainSelector extends DomainSelectorBase
         logi("selectDomain CS={" + csInService + ", " + accessNetworkTypeToString(mCsNetworkType)
                 + "}, PS={" + psInService + ", " + accessNetworkTypeToString(mPsNetworkType) + "}");
         if (csAvailable && psAvailable) {
-            if (mPreferImsWhenCallsOnCs || isImsRegisteredWithVoiceCapability()) {
+            if (mSelectionAttributes.isExitedFromAirplaneMode()
+                    || mPreferImsWhenCallsOnCs || isImsRegisteredWithVoiceCapability()) {
                 mTryCsWhenPsFails = true;
                 onWwanNetworkTypeSelected(mPsNetworkType);
             } else if (isDeactivatedSim()) {
@@ -696,7 +676,8 @@ public class EmergencyCallDomainSelector extends DomainSelectorBase
             }
         } else if (psAvailable) {
             mTryEpsFallback = (mPsNetworkType == NGRAN) && isEpsFallbackAvailable();
-            if (!mRequiresImsRegistration || isImsRegisteredWithVoiceCapability()) {
+            if (mSelectionAttributes.isExitedFromAirplaneMode()
+                    || !mRequiresImsRegistration || isImsRegisteredWithVoiceCapability()) {
                 onWwanNetworkTypeSelected(mPsNetworkType);
             } else if (isDeactivatedSim()) {
                 // Deactivated SIM but PS is in service and supports emergency calls.
@@ -711,7 +692,8 @@ public class EmergencyCallDomainSelector extends DomainSelectorBase
             onWwanNetworkTypeSelected(mCsNetworkType);
         } else {
             // PS is in service but not supports emergency calls.
-            if (mRequiresImsRegistration && !isImsRegisteredWithVoiceCapability()) {
+            if (!mSelectionAttributes.isExitedFromAirplaneMode()
+                    && mRequiresImsRegistration && !isImsRegisteredWithVoiceCapability()) {
                 // Carrier configuration requires IMS registration for emergency services over PS,
                 // but not registered. Try CS emergency call.
                 requestScan(true, true);
@@ -767,7 +749,7 @@ public class EmergencyCallDomainSelector extends DomainSelectorBase
 
         mIsScanRequested = true;
         mWwanSelectorCallback.onRequestEmergencyNetworkScan(
-                mLastPreferredNetworks, mScanType, mCancelSignal,
+                mLastPreferredNetworks, mScanType, false, mCancelSignal,
                 (result) -> {
                     logi("requestScan-onComplete");
                     sendMessage(obtainMessage(MSG_NETWORK_SCAN_RESULT, result));
@@ -1185,7 +1167,8 @@ public class EmergencyCallDomainSelector extends DomainSelectorBase
         }
 
         if (!mCdmaPreferredNumbers.isEmpty()) {
-            if (mCdmaPreferredNumbers.contains(mSelectionAttributes.getNumber())) {
+            String number = mSelectionAttributes.getAddress().getSchemeSpecificPart();
+            if (mCdmaPreferredNumbers.contains(number)) {
                 // The number will be dialed over CDMA.
                 ratList.clear();
                 ratList.add(new Integer(CDMA2000));
@@ -1221,7 +1204,7 @@ public class EmergencyCallDomainSelector extends DomainSelectorBase
             if (regResult.getRegState() == REGISTRATION_STATE_HOME) return false;
             if (regResult.getRegState() == REGISTRATION_STATE_ROAMING) return true;
 
-            String iso = regResult.getIso();
+            String iso = regResult.getCountryIso();
             if (!TextUtils.isEmpty(iso)) netIso = iso;
         }
 
@@ -1377,7 +1360,7 @@ public class EmergencyCallDomainSelector extends DomainSelectorBase
             return true;
         }
 
-        String iso = regResult.getIso();
+        String iso = regResult.getCountryIso();
         if (sSimReadyAllowList.contains(iso)) {
             TelephonyManager tm = mContext.getSystemService(TelephonyManager.class);
             int simState = tm.getSimState(getSlotId());
@@ -1433,8 +1416,9 @@ public class EmergencyCallDomainSelector extends DomainSelectorBase
             inRoaming = (regState == REGISTRATION_STATE_ROAMING) || isInRoaming();
         }
 
+        String number = mSelectionAttributes.getAddress().getSchemeSpecificPart();
         mCrossSimRedialingController.startTimer(mContext, this, mSelectionAttributes.getCallId(),
-                mSelectionAttributes.getNumber(), inService, inRoaming, mModemCount);
+                number, inService, inRoaming, mModemCount);
     }
 
     /** Notifies that the cross stack redilaing timer has been expired. */
@@ -1568,28 +1552,6 @@ public class EmergencyCallDomainSelector extends DomainSelectorBase
         } else {
             onWwanNetworkTypeSelected(UTRAN);
         }
-    }
-
-    private boolean isTestEmergencyNumber(String number) {
-        number = PhoneNumberUtils.stripSeparators(number);
-        Map<Integer, List<EmergencyNumber>> list = new HashMap<>();
-        try {
-            TelephonyManager tm = mContext.getSystemService(TelephonyManager.class);
-            list = tm.getEmergencyNumberList();
-        } catch (IllegalStateException ise) {
-            loge("isTestEmergencyNumber ise=" + ise);
-        }
-
-        for (Integer sub : list.keySet()) {
-            for (EmergencyNumber eNumber : list.get(sub)) {
-                if (number.equals(eNumber.getNumber())
-                        && eNumber.isFromSources(EmergencyNumber.EMERGENCY_NUMBER_SOURCE_TEST)) {
-                    logd("isTestEmergencyNumber: " + number + " is a test emergency number.");
-                    return true;
-                }
-            }
-        }
-        return false;
     }
 
     @Override
