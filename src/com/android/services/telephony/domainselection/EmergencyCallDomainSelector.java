@@ -652,12 +652,17 @@ public class EmergencyCallDomainSelector extends DomainSelectorBase
         boolean psInService = isPsInService();
 
         if (!csInService && !psInService) {
+            mCsNetworkType = getSelectableCsNetworkType();
             mPsNetworkType = getSelectablePsNetworkType(false);
-            logi("selectDomain limited service ps=" + accessNetworkTypeToString(mPsNetworkType));
-            if (mPsNetworkType == UNKNOWN) {
-                requestScan(true);
-            } else {
+            logi("selectDomain limited service ps=" + accessNetworkTypeToString(mPsNetworkType)
+                    + ", cs=" + accessNetworkTypeToString(mCsNetworkType));
+            // If NGRAN, request scan to trigger emergency registration.
+            if (mPsNetworkType == EUTRAN) {
                 onWwanNetworkTypeSelected(mPsNetworkType);
+            } else if (mCsNetworkType != UNKNOWN) {
+                onWwanNetworkTypeSelected(mCsNetworkType);
+            } else {
+                requestScan(true);
             }
             return;
         }
@@ -1543,7 +1548,12 @@ public class EmergencyCallDomainSelector extends DomainSelectorBase
     private void selectDomainForTestEmergencyNumber() {
         logi("selectDomainForTestEmergencyNumber");
         if (isImsRegisteredWithVoiceCapability()) {
-            onWwanNetworkTypeSelected(EUTRAN);
+            if (isImsRegisteredOverWifi()
+                    || isImsRegisteredOverCrossSim()) {
+                mTransportSelectorCallback.onWlanSelected(mVoWifiOverEmergencyPdn);
+            } else {
+                onWwanNetworkTypeSelected(EUTRAN);
+            }
         } else {
             onWwanNetworkTypeSelected(UTRAN);
         }

@@ -89,6 +89,7 @@ import com.android.internal.telephony.domainselection.NormalCallDomainSelectionC
 import com.android.internal.telephony.emergency.EmergencyStateTracker;
 import com.android.internal.telephony.emergency.RadioOnHelper;
 import com.android.internal.telephony.emergency.RadioOnStateListener;
+import com.android.internal.telephony.flags.Flags;
 import com.android.internal.telephony.imsphone.ImsExternalCallTracker;
 import com.android.internal.telephony.imsphone.ImsPhone;
 import com.android.internal.telephony.imsphone.ImsPhoneCallTracker;
@@ -749,6 +750,13 @@ public class TelephonyConnectionService extends ConnectionService {
                 }
             };
 
+    private void clearNormalCallDomainSelectionConnection() {
+        if (mDomainSelectionConnection != null) {
+            mDomainSelectionConnection.finishSelection();
+            mDomainSelectionConnection = null;
+        }
+    }
+
     /**
      * A listener for calls.
      */
@@ -761,17 +769,15 @@ public class TelephonyConnectionService extends ConnectionService {
                     if (c != null) {
                         switch(c.getState()) {
                             case Connection.STATE_ACTIVE: {
-                                Log.d(LOG_TAG, "Call State->ACTIVE."
-                                        + "Clearing DomainSelectionConnection");
-                                if (mDomainSelectionConnection != null) {
-                                    mDomainSelectionConnection.finishSelection();
-                                    mDomainSelectionConnection = null;
-                                }
+                                clearNormalCallDomainSelectionConnection();
                                 mNormalCallConnection = null;
                             }
                             break;
 
                             case Connection.STATE_DISCONNECTED: {
+                                // Clear connection if the call state changes from
+                                // DIALING -> DISCONNECTED without ACTIVE State.
+                                clearNormalCallDomainSelectionConnection();
                                 c.removeTelephonyConnectionListener(mNormalCallConnectionListener);
                             }
                             break;
@@ -2958,23 +2964,11 @@ public class TelephonyConnectionService extends ConnectionService {
             return;
         }
         if (originalConnection == null) {
-            int telephonyDisconnectCause = android.telephony.DisconnectCause.OUTGOING_FAILURE;
-            // On GSM phones, null connection means that we dialed an MMI code
-            if (phone.getPhoneType() == PhoneConstants.PHONE_TYPE_GSM ||
-                    phone.isUtEnabled()) {
-                Log.d(this, "dialed MMI code");
-                int subId = phone.getSubId();
-                Log.d(this, "subId: "+subId);
-                telephonyDisconnectCause = android.telephony.DisconnectCause.DIALED_MMI;
-                final Intent intent = new Intent(this, MMIDialogActivity.class);
-                intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK |
-                        Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS);
-                if (SubscriptionManager.isValidSubscriptionId(subId)) {
-                    SubscriptionManager.putSubscriptionIdExtra(intent, subId);
-                }
-                startActivity(intent);
-            }
             Log.d(this, "placeOutgoingConnection, phone.dial returned null");
+
+            // On GSM phones, null connection means that we dialed an MMI code
+            int telephonyDisconnectCause = handleMmiCode(
+                    phone, android.telephony.DisconnectCause.OUTGOING_FAILURE);
             connection.setTelephonyConnectionDisconnected(
                     mDisconnectCauseFactory.toTelecomDisconnectCause(telephonyDisconnectCause,
                             "Connection is null", phone.getPhoneId()));
@@ -2992,6 +2986,25 @@ public class TelephonyConnectionService extends ConnectionService {
                 connection.setOriginalConnection(originalConnection);
             }
         }
+    }
+
+    private int handleMmiCode(Phone phone, int telephonyDisconnectCause) {
+        int disconnectCause = telephonyDisconnectCause;
+        if (phone.getPhoneType() == PhoneConstants.PHONE_TYPE_GSM
+                || phone.isUtEnabled()) {
+            Log.d(this, "dialed MMI code");
+            int subId = phone.getSubId();
+            Log.d(this, "subId: " + subId);
+            disconnectCause = android.telephony.DisconnectCause.DIALED_MMI;
+            final Intent intent = new Intent(this, MMIDialogActivity.class);
+            intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                    | Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS);
+            if (SubscriptionManager.isValidSubscriptionId(subId)) {
+                SubscriptionManager.putSubscriptionIdExtra(intent, subId);
+            }
+            startActivity(intent);
+        }
+        return disconnectCause;
     }
 
     private void handleOutgoingCallConnectionByCallDomainSelection(
@@ -3023,6 +3036,20 @@ public class TelephonyConnectionService extends ConnectionService {
                                         .build(),
                                 mNormalCallConnection::registerForCallEvents);
 
+                if (connection == null) {
+                    Log.d(this, "placeOutgoingConnection, phone.dial returned null");
+
+                    // On GSM phones, null connection means that we dialed an MMI code
+                    int telephonyDisconnectCause = handleMmiCode(
+                            phone, android.telephony.DisconnectCause.OUTGOING_FAILURE);
+                    mNormalCallConnection.setTelephonyConnectionDisconnected(mDisconnectCauseFactory
+                            .toTelecomDisconnectCause(telephonyDisconnectCause,
+                                    "Connection is null", phone.getPhoneId()));
+                    clearNormalCallDomainSelectionConnection();
+                    mNormalCallConnection.close();
+                    return;
+                }
+
                 mNormalCallConnection.setOriginalConnection(connection);
                 mNormalCallConnection.addTelephonyConnectionListener(mNormalCallConnectionListener);
                 return;
@@ -3046,10 +3073,7 @@ public class TelephonyConnectionService extends ConnectionService {
                             e.getMessage(), phone.getPhoneId()));
             mNormalCallConnection.close();
         }
-        if (mDomainSelectionConnection != null) {
-            mDomainSelectionConnection.finishSelection();
-            mDomainSelectionConnection = null;
-        }
+        clearNormalCallDomainSelectionConnection();
         mNormalCallConnection = null;
     }
 
@@ -3289,10 +3313,7 @@ public class TelephonyConnectionService extends ConnectionService {
                             && extraCode == ImsReasonInfo.EXTRA_CODE_CALL_RETRY_EMERGENCY)) {
                 // clear normal call domain selector
                 c.removeTelephonyConnectionListener(mNormalCallConnectionListener);
-                if (mDomainSelectionConnection != null) {
-                    mDomainSelectionConnection.finishSelection();
-                    mDomainSelectionConnection = null;
-                }
+                clearNormalCallDomainSelectionConnection();
                 mNormalCallConnection = null;
 
                 onEmergencyRedial(c, c.getPhone().getDefaultPhone());
@@ -3488,10 +3509,7 @@ public class TelephonyConnectionService extends ConnectionService {
         }
 
         c.removeTelephonyConnectionListener(mTelephonyConnectionListener);
-        if (mDomainSelectionConnection != null) {
-            mDomainSelectionConnection.finishSelection();
-            mDomainSelectionConnection = null;
-        }
+        clearNormalCallDomainSelectionConnection();
         mNormalCallConnection = null;
         Log.d(LOG_TAG, "Reselect call domain not triggered.");
         return false;
@@ -4685,10 +4703,34 @@ public class TelephonyConnectionService extends ConnectionService {
         return origAccountHandle;
     }
 
+    /*
+     * Returns true if both existing connections on-device and the incoming connection support HOLD,
+     * false otherwise. Assumes that a TelephonyConference supports HOLD.
+     */
+    private boolean allCallsSupportHold(@NonNull TelephonyConnection incomingConnection) {
+        if (Flags.callExtraForNonHoldSupportedCarriers()) {
+            if (getAllConnections().stream()
+                    .filter(c ->
+                            // Exclude multiendpoint calls as they're not on this device.
+                            (c.getConnectionProperties() & Connection.PROPERTY_IS_EXTERNAL_CALL)
+                                    == 0
+                                    && (c.getConnectionCapabilities()
+                                    & Connection.CAPABILITY_SUPPORT_HOLD) != 0).count() == 0) {
+                return false;
+            }
+            if ((incomingConnection.getConnectionCapabilities()
+                    & Connection.CAPABILITY_SUPPORT_HOLD) == 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     /**
-     * For the passed in incoming {@link TelephonyConnection}, for non- dual active voice devices,
+     * For the passed in incoming {@link TelephonyConnection}, for non-dual active voice devices,
      * adds {@link Connection#EXTRA_ANSWERING_DROPS_FG_CALL} if there are ongoing calls on another
-     * subscription (ie phone account handle) than the one passed in.
+     * subscription (ie phone account handle) than the one passed in. For dual active voice devices,
+     * still sets the EXTRA if either subscription has connections that don't support hold.
      * @param connection The connection.
      * @param phoneAccountHandle The {@link PhoneAccountHandle} the incoming call originated on;
      *                           this is passed in because
@@ -4702,12 +4744,11 @@ public class TelephonyConnectionService extends ConnectionService {
             return;
         }
 
-        if (mTelephonyManagerProxy.isDsdsMode() &&
-                mTelephonyManagerProxy.isDsdsTransitionSupported()) {
-            return;
-        }
-
         if (isCallPresentOnOtherSub(phoneAccountHandle)) {
+            if (mTelephonyManagerProxy.isConcurrentCallsPossible()
+                    && allCallsSupportHold(connection)) {
+                return;
+            }
             Log.i(this, "maybeIndicateAnsweringWillDisconnect; answering call %s will cause a call "
                     + "on another subscription to drop.", connection.getTelecomCallId());
             Bundle extras = new Bundle();
@@ -4837,13 +4878,16 @@ public class TelephonyConnectionService extends ConnectionService {
 
     /**
      * Where there are ongoing calls on another subscription other than the one specified,
-     * disconnect these calls for non-DSDA devices. This is used where there is an incoming call on
-     * one sub, but there are ongoing calls on another sub which need to be disconnected.
+     * disconnect these calls. This is used where there is an incoming call on one sub, but there
+     * are ongoing calls on another sub which need to be disconnected.
      * @param incomingHandle The incoming {@link PhoneAccountHandle}.
+     * @param answeringDropsFgCall Whether for dual-SIM dual active devices, answering the incoming
+     *                            call should drop the second call.
      */
-    public void maybeDisconnectCallsOnOtherSubs(@NonNull PhoneAccountHandle incomingHandle) {
+    public void maybeDisconnectCallsOnOtherSubs(
+            @NonNull PhoneAccountHandle incomingHandle, boolean answeringDropsFgCall) {
         Log.i(this, "maybeDisconnectCallsOnOtherSubs: check for calls not on %s", incomingHandle);
-        maybeDisconnectCallsOnOtherSubs(getAllConnections(), incomingHandle,
+        maybeDisconnectCallsOnOtherSubs(getAllConnections(), incomingHandle, answeringDropsFgCall,
                 mTelephonyManagerProxy);
     }
 
@@ -4853,13 +4897,16 @@ public class TelephonyConnectionService extends ConnectionService {
      * the core functionality.
      * @param connections the calls to check.
      * @param incomingHandle the incoming handle.
+     * @param answeringDropsFgCall Whether for dual-SIM dual active devices, answering the incoming
+     *                            call should drop the second call.
      * @param telephonyManagerProxy the proxy to the {@link TelephonyManager} instance.
      */
     @VisibleForTesting
     public static void maybeDisconnectCallsOnOtherSubs(@NonNull Collection<Connection> connections,
             @NonNull PhoneAccountHandle incomingHandle,
+            boolean answeringDropsFgCall,
             TelephonyManagerProxy telephonyManagerProxy) {
-        if (telephonyManagerProxy.isDsdaOrDsdsTransitionMode()) {
+        if (telephonyManagerProxy.isDsdaOrDsdsTransitionMode() && !answeringDropsFgCall) {
             return;
         }
         connections.stream()

@@ -581,9 +581,9 @@ public class PhoneGlobals extends ContextWrapper {
 
             phoneMgr = PhoneInterfaceManager.init(this, mFeatureFlags);
 
-            imsRcsController = ImsRcsController.init(this);
+            imsRcsController = ImsRcsController.init(this, mFeatureFlags);
 
-            configLoader = CarrierConfigLoader.init(this);
+            configLoader = CarrierConfigLoader.init(this, mFeatureFlags);
 
             if (getPackageManager().hasSystemFeature(PackageManager.FEATURE_TELEPHONY_IMS)) {
                 mImsStateCallbackController =
@@ -1043,6 +1043,11 @@ public class PhoneGlobals extends ContextWrapper {
         }
 
         ServiceState serviceState = phone.getServiceState();
+        if (serviceState == null) {
+            Log.e(LOG_TAG, "updateDataRoamingStatus: serviceState is null");
+            return;
+        }
+
         String roamingNumeric = serviceState.getOperatorNumeric();
         String roamingNumericReason = "RoamingNumeric=" + roamingNumeric;
         String callingReason = "CallingReason=" + reason;
