@@ -1456,6 +1456,7 @@ public class TelephonyConnectionService extends ConnectionService {
         final Phone phone = getPhoneForAccount(request.getAccountHandle(), isEmergencyNumber,
                 /* Note: when not an emergency, handle can be null for unknown callers */
                 handle == null ? null : handle.getSchemeSpecificPart());
+        ImsPhone imsPhone = phone != null ? (ImsPhone) phone.getImsPhone() : null;
 
         boolean isPhoneWifiCallingEnabled = phone != null && phone.isWifiCallingEnabled();
         boolean needToTurnOnRadio = (isEmergencyNumber && (!isRadioOn() || isAirplaneModeOn))
@@ -1486,6 +1487,7 @@ public class TelephonyConnectionService extends ConnectionService {
             }
             int timeoutToOnTimeoutCallback = mDomainSelectionResolver.isDomainSelectionSupported()
                     ? TIMEOUT_TO_DYNAMIC_ROUTING_MS : 0;
+            final Phone phoneForEmergency = phone;
             mRadioOnHelper.triggerRadioOnAndListen(new RadioOnStateListener.Callback() {
                 @Override
                 public void onComplete(RadioOnStateListener listener, boolean isRadioReady) {
@@ -1510,7 +1512,7 @@ public class TelephonyConnectionService extends ConnectionService {
                             && phone.getHalVersion(HAL_SERVICE_VOICE)
                             .less(RIL.RADIO_HAL_VERSION_1_4);
                     if (mDomainSelectionResolver.isDomainSelectionSupported()) {
-                        if (isEmergencyNumber) {
+                        if (isEmergencyNumber && phone == phoneForEmergency) {
                             // Since the domain selection service is enabled,
                             // dilaing normal routing emergency number only reaches here.
                             if (!isVoiceInService(phone, imsVoiceCapable)) {
@@ -1599,8 +1601,9 @@ public class TelephonyConnectionService extends ConnectionService {
                     }
                 }
                 ServiceState serviceState = phone != null ? phone.getServiceState() : null;
-                if (mSatelliteController.isSatelliteEnabled()
-                        || isCallDisallowedDueToSatellite(phone)) {
+                if ((mSatelliteController.isSatelliteEnabled()
+                        || isCallDisallowedDueToSatellite(phone))
+                        && (imsPhone == null || !imsPhone.canMakeWifiCall())) {
                     Log.d(this, "onCreateOutgoingConnection, cannot make call in satellite mode.");
                     return Connection.createFailedConnection(
                             mDisconnectCauseFactory.toTelecomDisconnectCause(
@@ -3120,7 +3123,7 @@ public class TelephonyConnectionService extends ConnectionService {
         SelectionAttributes selectionAttributes =
                 new SelectionAttributes.Builder(phone.getPhoneId(), phone.getSubId(),
                         SELECTOR_TYPE_CALLING)
-                        .setNumber(number)
+                        .setAddress(Uri.fromParts(PhoneAccount.SCHEME_TEL, number, null))
                         .setEmergency(false)
                         .setVideoCall(VideoProfile.isVideo(videoState))
                         .build();
@@ -3169,7 +3172,7 @@ public class TelephonyConnectionService extends ConnectionService {
                 }
                 if (result == android.telephony.DisconnectCause.NOT_DISCONNECTED) {
                     createEmergencyConnection(phone, (TelephonyConnection) resultConnection,
-                            numberToDial, request, needToTurnOnRadio,
+                            numberToDial, isTestEmergencyNumber, request, needToTurnOnRadio,
                             mEmergencyStateTracker.getEmergencyRegResult());
                 } else {
                     mEmergencyConnection = null;
@@ -3193,6 +3196,7 @@ public class TelephonyConnectionService extends ConnectionService {
     @SuppressWarnings("FutureReturnValueIgnored")
     private void createEmergencyConnection(final Phone phone,
             final TelephonyConnection resultConnection, final String number,
+            final boolean isTestEmergencyNumber,
             final ConnectionRequest request, boolean needToTurnOnRadio,
             final EmergencyRegResult regResult) {
         Log.i(this, "createEmergencyConnection");
@@ -3234,7 +3238,8 @@ public class TelephonyConnectionService extends ConnectionService {
         DomainSelectionService.SelectionAttributes attr =
                 EmergencyCallDomainSelectionConnection.getSelectionAttributes(
                         phone.getPhoneId(), phone.getSubId(), needToTurnOnRadio,
-                        request.getTelecomCallId(), number, 0, null, regResult);
+                        request.getTelecomCallId(), number, isTestEmergencyNumber,
+                        0, null, regResult);
 
         CompletableFuture<Integer> future =
                 mEmergencyCallDomainSelectionConnection.createEmergencyConnection(
@@ -3339,7 +3344,7 @@ public class TelephonyConnectionService extends ConnectionService {
                     EmergencyCallDomainSelectionConnection.getSelectionAttributes(
                             c.getPhone().getPhoneId(), c.getPhone().getSubId(), false,
                             c.getTelecomCallId(), c.getAddress().getSchemeSpecificPart(),
-                            callFailCause, reasonInfo, null);
+                            false, callFailCause, reasonInfo, null);
 
             CompletableFuture<Integer> future =
                     mEmergencyCallDomainSelectionConnection.reselectDomain(attr);
@@ -3609,7 +3614,7 @@ public class TelephonyConnectionService extends ConnectionService {
                                 phone.getPhoneId(),
                                 phone.getSubId(), false,
                                 c.getTelecomCallId(),
-                                c.getAddress().getSchemeSpecificPart(),
+                                c.getAddress().getSchemeSpecificPart(), isTestEmergencyNumber,
                                 0, null, mEmergencyStateTracker.getEmergencyRegResult());
 
                 CompletableFuture<Integer> domainFuture =
