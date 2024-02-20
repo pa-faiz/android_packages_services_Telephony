@@ -22,12 +22,23 @@ import static android.safetycenter.SafetyCenterManager.EXTRA_REFRESH_SAFETY_SOUR
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 
+import com.android.internal.telephony.Phone;
+import com.android.internal.telephony.flags.Flags;
 import com.android.phone.PhoneGlobals;
 
 public final class SafetySourceReceiver extends BroadcastReceiver {
     @Override
     public void onReceive(Context context, Intent intent) {
+
+        // If none of the features that depend on this receiver are enabled, there's no reason
+        // to progress.
+        if (!Flags.enableIdentifierDisclosureTransparencyUnsolEvents()
+                || !Flags.enableModemCipherTransparencyUnsolEvents()) {
+            return;
+        }
+
         String action = intent.getAction();
         if (!ACTION_REFRESH_SAFETY_SOURCES.equals(action)) {
             return;
@@ -39,6 +50,22 @@ public final class SafetySourceReceiver extends BroadcastReceiver {
             return;
         }
 
-        PhoneGlobals.getPhone().refreshSafetySources(refreshBroadcastId);
+        if (Flags.enforceTelephonyFeatureMappingForPublicApis()) {
+            if (context.getPackageManager().hasSystemFeature(PackageManager.FEATURE_TELEPHONY)) {
+                refreshSafetySources(refreshBroadcastId);
+            }
+        } else {
+            refreshSafetySources(refreshBroadcastId);
+        }
+    }
+
+    private void refreshSafetySources(String refreshBroadcastId) {
+        Phone phone = PhoneGlobals.getPhone();
+        // It's possible that phones have not been created yet. Safety center may send a refresh
+        // broadcast very early on.
+        if (phone != null) {
+            phone.refreshSafetySources(refreshBroadcastId);
+        }
+
     }
 }
