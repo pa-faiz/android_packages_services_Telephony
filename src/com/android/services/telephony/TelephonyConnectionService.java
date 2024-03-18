@@ -37,7 +37,6 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.os.ParcelUuid;
 import android.os.PersistableBundle;
-import android.provider.DeviceConfig;
 import android.telecom.Conference;
 import android.telecom.Conferenceable;
 import android.telecom.Connection;
@@ -54,7 +53,7 @@ import android.telephony.CarrierConfigManager;
 import android.telephony.DataSpecificRegistrationInfo;
 import android.telephony.DomainSelectionService;
 import android.telephony.DomainSelectionService.SelectionAttributes;
-import android.telephony.EmergencyRegResult;
+import android.telephony.EmergencyRegistrationResult;
 import android.telephony.NetworkRegistrationInfo;
 import android.telephony.PhoneNumberUtils;
 import android.telephony.RadioAccessFamily;
@@ -146,8 +145,6 @@ public class TelephonyConnectionService extends ConnectionService {
     // Timeout before we terminate the outgoing DSDA call if HOLD did not complete in time on the
     // existing call.
     private static final int DEFAULT_DSDA_OUTGOING_CALL_HOLD_TIMEOUT_MS = 2000;
-    private static final String KEY_DOMAIN_COMPARE_FEATURE_ENABLED_FLAG =
-            "is_domain_selection_compare_feature_enabled";
 
     // If configured, reject attempts to dial numbers matching this pattern.
     private static final Pattern CDMA_ACTIVATION_CODE_REGEX_PATTERN =
@@ -258,7 +255,6 @@ public class TelephonyConnectionService extends ConnectionService {
     private DomainSelectionResolver mDomainSelectionResolver;
     private EmergencyCallDomainSelectionConnection mEmergencyCallDomainSelectionConnection;
     private TelephonyConnection mEmergencyConnection;
-    private String mEmergencyCallId = null;
     private Executor mDomainSelectionMainExecutor;
     private ImsManager mImsManager = null;
     private DomainSelectionConnection mDomainSelectionConnection;
@@ -684,8 +680,7 @@ public class TelephonyConnectionService extends ConnectionService {
                     }
                     // Update the domain in the case that it changes,for example during initial
                     // setup or when there was an srvcc or internal redial.
-                    mEmergencyStateTracker.onEmergencyCallDomainUpdated(
-                            origConn.getPhoneType(), c.getTelecomCallId());
+                    mEmergencyStateTracker.onEmergencyCallDomainUpdated(origConn.getPhoneType(), c);
                 }
 
                 @Override
@@ -698,8 +693,8 @@ public class TelephonyConnectionService extends ConnectionService {
                             + ", state=" + state);
                     if (c.getState() == Connection.STATE_ACTIVE) {
                         mEmergencyStateTracker.onEmergencyCallStateChanged(
-                                c.getOriginalConnection().getState(), c.getTelecomCallId());
-                        releaseEmergencyCallDomainSelection(false);
+                                c.getOriginalConnection().getState(), c);
+                        releaseEmergencyCallDomainSelection(false, true);
                     }
                 }
 
@@ -717,8 +712,8 @@ public class TelephonyConnectionService extends ConnectionService {
                         return;
                     }
                     Log.i(this, "onConnectionPropertiesChanged prop=" + connectionProperties);
-                    mEmergencyStateTracker.onEmergencyCallPropertiesChanged(connectionProperties,
-                            c.getTelecomCallId());
+                    mEmergencyStateTracker.onEmergencyCallPropertiesChanged(
+                            connectionProperties, c);
                 }
             };
 
@@ -842,9 +837,8 @@ public class TelephonyConnectionService extends ConnectionService {
                         Phone phone = mEmergencyCallDomainSelectionConnection.getPhone();
                         mEmergencyConnection.removeTelephonyConnectionListener(
                                 mEmergencyConnectionListener);
-                        releaseEmergencyCallDomainSelection(true);
-                        mEmergencyStateTracker.endCall(mEmergencyCallId);
-                        mEmergencyCallId = null;
+                        releaseEmergencyCallDomainSelection(true, false);
+                        mEmergencyStateTracker.endCall(c);
                         retryOutgoingOriginalConnection(c, phone, isPermanentFailure);
                         return;
                     }
@@ -1456,6 +1450,7 @@ public class TelephonyConnectionService extends ConnectionService {
         final Phone phone = getPhoneForAccount(request.getAccountHandle(), isEmergencyNumber,
                 /* Note: when not an emergency, handle can be null for unknown callers */
                 handle == null ? null : handle.getSchemeSpecificPart());
+        ImsPhone imsPhone = phone != null ? (ImsPhone) phone.getImsPhone() : null;
 
         boolean isPhoneWifiCallingEnabled = phone != null && phone.isWifiCallingEnabled();
         boolean needToTurnOnRadio = (isEmergencyNumber && (!isRadioOn() || isAirplaneModeOn))
@@ -1486,6 +1481,7 @@ public class TelephonyConnectionService extends ConnectionService {
             }
             int timeoutToOnTimeoutCallback = mDomainSelectionResolver.isDomainSelectionSupported()
                     ? TIMEOUT_TO_DYNAMIC_ROUTING_MS : 0;
+            final Phone phoneForEmergency = phone;
             mRadioOnHelper.triggerRadioOnAndListen(new RadioOnStateListener.Callback() {
                 @Override
                 public void onComplete(RadioOnStateListener listener, boolean isRadioReady) {
@@ -1510,7 +1506,7 @@ public class TelephonyConnectionService extends ConnectionService {
                             && phone.getHalVersion(HAL_SERVICE_VOICE)
                             .less(RIL.RADIO_HAL_VERSION_1_4);
                     if (mDomainSelectionResolver.isDomainSelectionSupported()) {
-                        if (isEmergencyNumber) {
+                        if (isEmergencyNumber && phone == phoneForEmergency) {
                             // Since the domain selection service is enabled,
                             // dilaing normal routing emergency number only reaches here.
                             if (!isVoiceInService(phone, imsVoiceCapable)) {
@@ -1599,8 +1595,9 @@ public class TelephonyConnectionService extends ConnectionService {
                     }
                 }
                 ServiceState serviceState = phone != null ? phone.getServiceState() : null;
-                if (mSatelliteController.isSatelliteEnabled()
-                        || isCallDisallowedDueToSatellite(phone)) {
+                if ((mSatelliteController.isSatelliteEnabled()
+                        || isCallDisallowedDueToSatellite(phone))
+                        && (imsPhone == null || !imsPhone.canMakeWifiCall())) {
                     Log.d(this, "onCreateOutgoingConnection, cannot make call in satellite mode.");
                     return Connection.createFailedConnection(
                             mDisconnectCauseFactory.toTelecomDisconnectCause(
@@ -2959,6 +2956,10 @@ public class TelephonyConnectionService extends ConnectionService {
             }
         } catch (CallStateException e) {
             Log.e(this, e, "placeOutgoingConnection, phone.dial exception: " + e);
+            if (mDomainSelectionResolver.isDomainSelectionSupported()) {
+                // Notify EmergencyStateTracker and DomainSelector of the cancellation by exception
+                onLocalHangup(connection);
+            }
             connection.unregisterForCallEvents();
             handleCallStateException(e, connection, phone);
             return;
@@ -3016,14 +3017,6 @@ public class TelephonyConnectionService extends ConnectionService {
                 extras = new Bundle();
             }
             extras.putInt(PhoneConstants.EXTRA_DIAL_DOMAIN, domain);
-            // Add flag to bundle for comparing legacy and new domain selection results. When
-            // EXTRA_COMPARE_DOMAIN flag is true, legacy domain selection result is used for
-            // placing the call and if both the results are not same then bug report is generated.
-            DeviceConfig.Properties properties = //read all telephony properties
-                    DeviceConfig.getProperties(DeviceConfig.NAMESPACE_TELEPHONY);
-            boolean compareDomainSelection =
-                    properties.getBoolean(KEY_DOMAIN_COMPARE_FEATURE_ENABLED_FLAG, false);
-            extras.putBoolean(PhoneConstants.EXTRA_COMPARE_DOMAIN, compareDomainSelection);
 
             if (phone != null) {
                 Log.v(LOG_TAG, "Call dialing. Domain: " + domain);
@@ -3042,11 +3035,15 @@ public class TelephonyConnectionService extends ConnectionService {
                     // On GSM phones, null connection means that we dialed an MMI code
                     int telephonyDisconnectCause = handleMmiCode(
                             phone, android.telephony.DisconnectCause.OUTGOING_FAILURE);
-                    mNormalCallConnection.setTelephonyConnectionDisconnected(mDisconnectCauseFactory
-                            .toTelecomDisconnectCause(telephonyDisconnectCause,
-                                    "Connection is null", phone.getPhoneId()));
+                    if (mNormalCallConnection.getState() != Connection.STATE_DISCONNECTED) {
+                        mNormalCallConnection.setTelephonyConnectionDisconnected(
+                                mDisconnectCauseFactory.toTelecomDisconnectCause(
+                                        telephonyDisconnectCause,
+                                        "Connection is null",
+                                        phone.getPhoneId()));
+                        mNormalCallConnection.close();
+                    }
                     clearNormalCallDomainSelectionConnection();
-                    mNormalCallConnection.close();
                     return;
                 }
 
@@ -3092,6 +3089,7 @@ public class TelephonyConnectionService extends ConnectionService {
                 PhoneNumberUtils.stripSeparators(number));
         boolean isMmiCode = isMmiCode(number);
         boolean isSuppServiceCode = ImsPhoneMmiCode.isSuppServiceCodes(dialPart, phone);
+        boolean isPotentialUssdCode = isMmiCode && !isSuppServiceCode;
 
         // If the number is both an MMI code and a supplementary service code,
         // it shall be treated as UT. In this case, domain selection is not performed.
@@ -3099,6 +3097,10 @@ public class TelephonyConnectionService extends ConnectionService {
             Log.v(LOG_TAG, "UT code not handled by call domain selection.");
             return false;
         }
+
+        /* For USSD codes, connection is closed and MMIDialogActivity is started.
+           To avoid connection close and return false. isPotentialUssdCode is handled after
+            all condition checks. */
 
         // Check and select same domain as ongoing call on the same subscription (if exists)
         int activeCallDomain = getActiveCallDomain(phone.getSubId());
@@ -3120,7 +3122,7 @@ public class TelephonyConnectionService extends ConnectionService {
         SelectionAttributes selectionAttributes =
                 new SelectionAttributes.Builder(phone.getPhoneId(), phone.getSubId(),
                         SELECTOR_TYPE_CALLING)
-                        .setNumber(number)
+                        .setAddress(Uri.fromParts(PhoneAccount.SCHEME_TEL, number, null))
                         .setEmergency(false)
                         .setVideoCall(VideoProfile.isVideo(videoState))
                         .build();
@@ -3135,6 +3137,15 @@ public class TelephonyConnectionService extends ConnectionService {
         mNormalCallConnection = connection;
         future.thenAcceptAsync((domain) -> handleOutgoingCallConnectionByCallDomainSelection(
                 domain, phone, number, videoState), mDomainSelectionMainExecutor);
+
+        if (isPotentialUssdCode) {
+            Log.v(LOG_TAG, "PotentialUssdCode. Closing connection with DisconnectCause.DIALED_MMI");
+            connection.setTelephonyConnectionDisconnected(
+                    mDisconnectCauseFactory.toTelecomDisconnectCause(
+                            android.telephony.DisconnectCause.DIALED_MMI,
+                            "Dialing USSD", phone.getPhoneId()));
+            connection.close();
+        }
         return true;
     }
 
@@ -3158,19 +3169,19 @@ public class TelephonyConnectionService extends ConnectionService {
                 mEmergencyStateTracker = EmergencyStateTracker.getInstance();
             }
 
-            mEmergencyCallId = resultConnection.getTelecomCallId();
+            mEmergencyConnection = (TelephonyConnection) resultConnection;
             CompletableFuture<Integer> future = mEmergencyStateTracker.startEmergencyCall(
-                    phone, mEmergencyCallId, isTestEmergencyNumber);
+                    phone, resultConnection, isTestEmergencyNumber);
             future.thenAccept((result) -> {
                 Log.d(this, "startEmergencyCall-complete result=" + result);
-                if (mEmergencyCallId == null) {
+                if (mEmergencyConnection == null) {
                     Log.i(this, "startEmergencyCall-complete dialing canceled");
                     return;
                 }
                 if (result == android.telephony.DisconnectCause.NOT_DISCONNECTED) {
                     createEmergencyConnection(phone, (TelephonyConnection) resultConnection,
-                            numberToDial, request, needToTurnOnRadio,
-                            mEmergencyStateTracker.getEmergencyRegResult());
+                            numberToDial, isTestEmergencyNumber, request, needToTurnOnRadio,
+                            mEmergencyStateTracker.getEmergencyRegistrationResult());
                 } else {
                     mEmergencyConnection = null;
                     String reason = "Couldn't setup emergency call";
@@ -3183,18 +3194,17 @@ public class TelephonyConnectionService extends ConnectionService {
                     mIsEmergencyCallPending = false;
                 }
             });
-            mEmergencyConnection = (TelephonyConnection) resultConnection;
-            return resultConnection;
         }
-        Log.i(this, "placeEmergencyConnection returns null");
-        return null;
+        // Non TelephonyConnection type instance means dialing failure.
+        return resultConnection;
     }
 
     @SuppressWarnings("FutureReturnValueIgnored")
     private void createEmergencyConnection(final Phone phone,
             final TelephonyConnection resultConnection, final String number,
+            final boolean isTestEmergencyNumber,
             final ConnectionRequest request, boolean needToTurnOnRadio,
-            final EmergencyRegResult regResult) {
+            final EmergencyRegistrationResult regResult) {
         Log.i(this, "createEmergencyConnection");
 
         if (phone.getImsPhone() == null) {
@@ -3234,14 +3244,15 @@ public class TelephonyConnectionService extends ConnectionService {
         DomainSelectionService.SelectionAttributes attr =
                 EmergencyCallDomainSelectionConnection.getSelectionAttributes(
                         phone.getPhoneId(), phone.getSubId(), needToTurnOnRadio,
-                        request.getTelecomCallId(), number, 0, null, regResult);
+                        request.getTelecomCallId(), number, isTestEmergencyNumber,
+                        0, null, regResult);
 
         CompletableFuture<Integer> future =
                 mEmergencyCallDomainSelectionConnection.createEmergencyConnection(
                         attr, mEmergencyDomainSelectionConnectionCallback);
         future.thenAcceptAsync((result) -> {
             Log.d(this, "createEmergencyConnection-complete result=" + result);
-            if (mEmergencyCallId == null) {
+            if (mEmergencyConnection == null) {
                 Log.i(this, "createEmergencyConnection-complete dialing canceled");
                 return;
             }
@@ -3259,7 +3270,7 @@ public class TelephonyConnectionService extends ConnectionService {
         extras.putInt(PhoneConstants.EXTRA_DIAL_DOMAIN, NetworkRegistrationInfo.DOMAIN_CS);
         mDomainSelectionMainExecutor.execute(
                 () -> {
-                    if (mEmergencyCallId == null) {
+                    if (mEmergencyConnection == null) {
                         Log.i(this, "dialCsEmergencyCall dialing canceled");
                         return;
                     }
@@ -3267,14 +3278,16 @@ public class TelephonyConnectionService extends ConnectionService {
                 });
     }
 
-    private void releaseEmergencyCallDomainSelection(boolean cancel) {
+    private void releaseEmergencyCallDomainSelection(boolean cancel, boolean isActive) {
         if (mEmergencyCallDomainSelectionConnection != null) {
             if (cancel) mEmergencyCallDomainSelectionConnection.cancelSelection();
             else mEmergencyCallDomainSelectionConnection.finishSelection();
             mEmergencyCallDomainSelectionConnection = null;
         }
         mIsEmergencyCallPending = false;
-        mEmergencyConnection = null;
+        if (!isActive) {
+            mEmergencyConnection = null;
+        }
     }
 
     /**
@@ -3294,14 +3307,14 @@ public class TelephonyConnectionService extends ConnectionService {
         int callFailCause = c.getOriginalConnection().getPreciseDisconnectCause();
 
         Log.i(this, "maybeReselectDomain csCause=" +  callFailCause + ", psCause=" + reasonInfo);
-        if (TextUtils.equals(mEmergencyCallId, c.getTelecomCallId())) {
+        if (mEmergencyConnection == c) {
             if (mEmergencyCallDomainSelectionConnection != null) {
                 return maybeReselectDomainForEmergencyCall(c, callFailCause, reasonInfo);
             }
             Log.i(this, "maybeReselectDomain endCall()");
             c.removeTelephonyConnectionListener(mEmergencyConnectionListener);
-            mEmergencyStateTracker.endCall(c.getTelecomCallId());
-            mEmergencyCallId = null;
+            releaseEmergencyCallDomainSelection(false, false);
+            mEmergencyStateTracker.endCall(c);
             return false;
         }
 
@@ -3339,7 +3352,7 @@ public class TelephonyConnectionService extends ConnectionService {
                     EmergencyCallDomainSelectionConnection.getSelectionAttributes(
                             c.getPhone().getPhoneId(), c.getPhone().getSubId(), false,
                             c.getTelecomCallId(), c.getAddress().getSchemeSpecificPart(),
-                            callFailCause, reasonInfo, null);
+                            false, callFailCause, reasonInfo, null);
 
             CompletableFuture<Integer> future =
                     mEmergencyCallDomainSelectionConnection.reselectDomain(attr);
@@ -3348,7 +3361,7 @@ public class TelephonyConnectionService extends ConnectionService {
             if (future != null) {
                 future.thenAcceptAsync((result) -> {
                     Log.d(this, "reselectDomain-complete");
-                    if (mEmergencyCallId == null) {
+                    if (mEmergencyConnection == null) {
                         Log.i(this, "reselectDomain-complete dialing canceled");
                         return;
                     }
@@ -3360,9 +3373,8 @@ public class TelephonyConnectionService extends ConnectionService {
 
         Log.i(this, "maybeReselectDomainForEmergencyCall endCall()");
         c.removeTelephonyConnectionListener(mEmergencyConnectionListener);
-        releaseEmergencyCallDomainSelection(true);
-        mEmergencyStateTracker.endCall(c.getTelecomCallId());
-        mEmergencyCallId = null;
+        releaseEmergencyCallDomainSelection(true, false);
+        mEmergencyStateTracker.endCall(c);
         return false;
     }
 
@@ -3576,12 +3588,12 @@ public class TelephonyConnectionService extends ConnectionService {
             mEmergencyStateTracker = EmergencyStateTracker.getInstance();
         }
 
-        mEmergencyCallId = c.getTelecomCallId();
+        mEmergencyConnection = c;
         CompletableFuture<Integer> future = mEmergencyStateTracker.startEmergencyCall(
-                phone, mEmergencyCallId, isTestEmergencyNumber);
+                phone, c, isTestEmergencyNumber);
         future.thenAccept((result) -> {
             Log.d(this, "onEmergencyRedial-complete result=" + result);
-            if (mEmergencyCallId == null) {
+            if (mEmergencyConnection == null) {
                 Log.i(this, "onEmergencyRedial-complete dialing canceled");
                 return;
             }
@@ -3602,15 +3614,13 @@ public class TelephonyConnectionService extends ConnectionService {
                 mEmergencyCallDomainSelectionConnection =
                         (EmergencyCallDomainSelectionConnection) selectConnection;
 
-                mEmergencyConnection = c;
-
                 DomainSelectionService.SelectionAttributes attr =
                         EmergencyCallDomainSelectionConnection.getSelectionAttributes(
                                 phone.getPhoneId(),
                                 phone.getSubId(), false,
                                 c.getTelecomCallId(),
-                                c.getAddress().getSchemeSpecificPart(),
-                                0, null, mEmergencyStateTracker.getEmergencyRegResult());
+                                c.getAddress().getSchemeSpecificPart(), isTestEmergencyNumber,
+                                0, null, mEmergencyStateTracker.getEmergencyRegistrationResult());
 
                 CompletableFuture<Integer> domainFuture =
                         mEmergencyCallDomainSelectionConnection.createEmergencyConnection(
@@ -3622,6 +3632,7 @@ public class TelephonyConnectionService extends ConnectionService {
                     mIsEmergencyCallPending = false;
                 }, mDomainSelectionMainExecutor);
             } else {
+                mEmergencyConnection = null;
                 c.setTelephonyConnectionDisconnected(
                         mDisconnectCauseFactory.toTelecomDisconnectCause(result, "unknown error"));
                 c.close();
@@ -3633,7 +3644,7 @@ public class TelephonyConnectionService extends ConnectionService {
     private void recreateEmergencyConnection(final TelephonyConnection connection,
             final Phone phone, final @NetworkRegistrationInfo.Domain int result) {
         Log.d(this, "recreateEmergencyConnection result=" + result);
-        if (mEmergencyCallId == null) {
+        if (mEmergencyConnection == null) {
             Log.i(this, "recreateEmergencyConnection dialing canceled");
             return;
         }
@@ -3684,15 +3695,6 @@ public class TelephonyConnectionService extends ConnectionService {
 
         Bundle extras = new Bundle();
         extras.putInt(PhoneConstants.EXTRA_DIAL_DOMAIN, domain);
-        // Add flag to bundle for comparing legacy and new domain selection results. When
-        // EXTRA_COMPARE_DOMAIN flag is true, legacy domain selection result is used for
-        // placing the call and if both the results are not same then bug report is generated.
-        DeviceConfig.Properties properties = //read all telephony properties
-                DeviceConfig.getProperties(DeviceConfig.NAMESPACE_TELEPHONY);
-        boolean compareDomainSelection =
-                properties.getBoolean(KEY_DOMAIN_COMPARE_FEATURE_ENABLED_FLAG, false);
-        extras.putBoolean(PhoneConstants.EXTRA_COMPARE_DOMAIN, compareDomainSelection);
-
         com.android.internal.telephony.Connection originalConnection =
                 connection.getOriginalConnection();
         if (originalConnection instanceof ImsPhoneConnection) {
@@ -3727,13 +3729,22 @@ public class TelephonyConnectionService extends ConnectionService {
     }
 
     protected void onLocalHangup(TelephonyConnection c) {
-        if (TextUtils.equals(mEmergencyCallId, c.getTelecomCallId())) {
-            Log.i(this, "onLocalHangup " + mEmergencyCallId);
+        if (mEmergencyConnection == c) {
+            Log.i(this, "onLocalHangup " + c.getTelecomCallId());
             c.removeTelephonyConnectionListener(mEmergencyConnectionListener);
-            releaseEmergencyCallDomainSelection(true);
-            mEmergencyStateTracker.endCall(c.getTelecomCallId());
-            mEmergencyCallId = null;
+            releaseEmergencyCallDomainSelection(true, false);
+            mEmergencyStateTracker.endCall(c);
         }
+    }
+
+    @VisibleForTesting
+    public TelephonyConnection getEmergencyConnection() {
+        return mEmergencyConnection;
+    }
+
+    @VisibleForTesting
+    public void setEmergencyConnection(TelephonyConnection c) {
+        mEmergencyConnection = c;
     }
 
     @VisibleForTesting
@@ -4358,6 +4369,11 @@ public class TelephonyConnectionService extends ConnectionService {
     @VisibleForTesting
     public boolean isAvailableForEmergencyCalls(Phone phone,
             @EmergencyNumber.EmergencyCallRouting int routing) {
+        if (isCallDisallowedDueToSatellite(phone)) {
+            // Phone is connected to satellite due to which it is not preferred for emergency call.
+            return false;
+        }
+
         if (phone.getImsRegistrationTech() == ImsRegistrationImplBase.REGISTRATION_TECH_CROSS_SIM) {
             // When a Phone is registered to Cross-SIM calling, there must always be a Phone on the
             // other sub which is registered to cellular, so that must be selected.
@@ -5496,6 +5512,10 @@ public class TelephonyConnectionService extends ConnectionService {
         }
 
         ServiceState serviceState = phone.getServiceState();
+        if (serviceState == null) {
+            return false;
+        }
+
         if (!serviceState.isUsingNonTerrestrialNetwork()) {
             // Device is not connected to satellite
             return false;

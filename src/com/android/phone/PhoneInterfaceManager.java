@@ -25,6 +25,7 @@ import static android.telephony.TelephonyManager.HAL_SERVICE_NETWORK;
 import static android.telephony.TelephonyManager.HAL_SERVICE_RADIO;
 import static android.telephony.satellite.SatelliteManager.KEY_SATELLITE_COMMUNICATION_ALLOWED;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_ACCESS_BARRED;
+import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_REQUEST_NOT_SUPPORTED;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_SUCCESS;
 
 import static com.android.internal.telephony.PhoneConstants.PHONE_TYPE_CDMA;
@@ -9467,17 +9468,17 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
             enforceModifyPermission();
         }
 
-        if (reason == TelephonyManager.DATA_ENABLED_REASON_USER && enabled
-                && null != callingPackage && opEnableMobileDataByUser()) {
-            mAppOps.noteOp(AppOpsManager.OPSTR_ENABLE_MOBILE_DATA_BY_USER, Binder.getCallingUid(),
-                    callingPackage, null, null);
-        }
-
         enforceTelephonyFeatureWithException(callingPackage,
                 PackageManager.FEATURE_TELEPHONY_DATA, "setDataEnabledForReason");
 
+        int callingUid = Binder.getCallingUid();
         final long identity = Binder.clearCallingIdentity();
         try {
+            if (reason == TelephonyManager.DATA_ENABLED_REASON_USER && enabled
+                    && null != callingPackage && opEnableMobileDataByUser()) {
+                mAppOps.noteOp(AppOpsManager.OPSTR_ENABLE_MOBILE_DATA_BY_USER,
+                        callingUid, callingPackage, null, null);
+            }
             Phone phone = getPhone(subId);
             if (phone != null) {
                 if (reason == TelephonyManager.DATA_ENABLED_REASON_CARRIER) {
@@ -12676,11 +12677,11 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
      *
      * @throws SecurityException if the caller doesn't have the required permission.
      */
-    @NonNull public List<String> getAllSatellitePlmnsForCarrier(int subId) {
-        enforceSatelliteCommunicationPermission("getAllSatellitePlmnsForCarrier");
+    @NonNull public List<String> getSatellitePlmnsForCarrier(int subId) {
+        enforceSatelliteCommunicationPermission("getSatellitePlmnsForCarrier");
         final long identity = Binder.clearCallingIdentity();
         try {
-            return mSatelliteController.getAllSatellitePlmnsForCarrier(subId);
+            return mSatelliteController.getSatellitePlmnsForCarrier(subId);
         } finally {
             Binder.restoreCallingIdentity(identity);
         }
@@ -12890,22 +12891,26 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
             long logcatStartTimestampMillis, boolean enableTelecomDump,
             boolean enableTelephonyDump) {
         DropBoxManager db = mApp.getSystemService(DropBoxManager.class);
-        TelephonyManager.EmergencyCallDiagnosticParams edp =
-                new TelephonyManager.EmergencyCallDiagnosticParams();
-        edp.setLogcatCollection(enableLogcat, logcatStartTimestampMillis);
-        edp.setTelephonyDumpSysCollection(enableTelephonyDump);
-        edp.setTelecomDumpSysCollection(enableTelecomDump);
-        Log.d(LOG_TAG, "persisting with Params " + edp.toString());
+        TelephonyManager.EmergencyCallDiagnosticData.Builder ecdDataBuilder =
+                new TelephonyManager.EmergencyCallDiagnosticData.Builder();
+        ecdDataBuilder
+                .setTelecomDumpsysCollectionEnabled(enableTelecomDump)
+                .setTelephonyDumpsysCollectionEnabled(enableTelephonyDump);
+        if (enableLogcat) {
+            ecdDataBuilder.setLogcatCollectionStartTimeMillis(logcatStartTimestampMillis);
+        }
+        TelephonyManager.EmergencyCallDiagnosticData ecdData = ecdDataBuilder.build();
+        Log.d(LOG_TAG, "persisting with Params " + ecdData.toString());
         DiagnosticDataCollector ddc = new DiagnosticDataCollector(Runtime.getRuntime(),
                 Executors.newCachedThreadPool(), db,
                 mApp.getSystemService(ActivityManager.class).isLowRamDevice());
-        ddc.persistEmergencyDianosticData(new DataCollectorConfig.Adapter(), edp, dropboxTag);
+        ddc.persistEmergencyDianosticData(new DataCollectorConfig.Adapter(), ecdData, dropboxTag);
     }
 
     /**
      * Request telephony to persist state for debugging emergency call failures.
      *
-     * @param dropBoxTag                 Tag to use when persisting data to dropbox service.
+     * @param dropboxTag                 Tag to use when persisting data to dropbox service.
      * @param enableLogcat               whether to collect logcat output
      * @param logcatStartTimestampMillis timestamp from when logcat buffers would be persisted
      * @param enableTelecomDump          whether to collect telecom dumpsys
@@ -13010,42 +13015,50 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
      * @param enableSatellite {@code true} to enable the satellite modem and
      *                        {@code false} to disable.
      * @param enableDemoMode {@code true} to enable demo mode and {@code false} to disable.
+     * @param isEmergency {@code true} to enable emergency mode, {@code false} otherwise.
      * @param callback The callback to get the result of the request.
      *
      * @throws SecurityException if the caller doesn't have the required permission.
      */
     @Override
     public void requestSatelliteEnabled(int subId, boolean enableSatellite, boolean enableDemoMode,
-            @NonNull IIntegerConsumer callback) {
+            boolean isEmergency, @NonNull IIntegerConsumer callback) {
         enforceSatelliteCommunicationPermission("requestSatelliteEnabled");
-        ResultReceiver resultReceiver = new ResultReceiver(mMainThreadHandler) {
-            @Override
-            protected void onReceiveResult(int resultCode, Bundle resultData) {
-                Log.d(LOG_TAG, "Satellite access restriction resultCode=" + resultCode
-                        + ", resultData=" + resultData);
-                boolean isAllowed = false;
-                Consumer<Integer> result = FunctionalUtils.ignoreRemoteException(callback::accept);
-                if (resultCode == SATELLITE_RESULT_SUCCESS) {
-                    if (resultData != null
-                            && resultData.containsKey(KEY_SATELLITE_COMMUNICATION_ALLOWED)) {
-                        isAllowed = resultData.getBoolean(KEY_SATELLITE_COMMUNICATION_ALLOWED);
+        if (enableSatellite) {
+            ResultReceiver resultReceiver = new ResultReceiver(mMainThreadHandler) {
+                @Override
+                protected void onReceiveResult(int resultCode, Bundle resultData) {
+                    Log.d(LOG_TAG, "Satellite access restriction resultCode=" + resultCode
+                            + ", resultData=" + resultData);
+                    boolean isAllowed = false;
+                    Consumer<Integer> result = FunctionalUtils.ignoreRemoteException(
+                            callback::accept);
+                    if (resultCode == SATELLITE_RESULT_SUCCESS) {
+                        if (resultData != null
+                                && resultData.containsKey(KEY_SATELLITE_COMMUNICATION_ALLOWED)) {
+                            isAllowed = resultData.getBoolean(KEY_SATELLITE_COMMUNICATION_ALLOWED);
+                        } else {
+                            loge("KEY_SATELLITE_COMMUNICATION_ALLOWED does not exist.");
+                        }
                     } else {
-                        loge("KEY_SATELLITE_COMMUNICATION_ALLOWED does not exist.");
+                        result.accept(resultCode);
+                        return;
                     }
-                } else {
-                    result.accept(resultCode);
-                    return;
+                    if (isAllowed) {
+                        mSatelliteController.requestSatelliteEnabled(
+                                subId, enableSatellite, enableDemoMode, callback);
+                    } else {
+                        result.accept(SATELLITE_RESULT_ACCESS_BARRED);
+                    }
                 }
-                if (isAllowed) {
-                    mSatelliteController.requestSatelliteEnabled(
-                            subId, enableSatellite, enableDemoMode, callback);
-                } else {
-                    result.accept(SATELLITE_RESULT_ACCESS_BARRED);
-                }
-            }
-        };
-        mSatelliteAccessController.requestIsSatelliteCommunicationAllowedForCurrentLocation(
-                subId, resultReceiver);
+            };
+            mSatelliteAccessController.requestIsCommunicationAllowedForCurrentLocation(
+                    subId, resultReceiver);
+        } else {
+            // No need to check if satellite is allowed at current location when disabling satellite
+            mSatelliteController.requestSatelliteEnabled(
+                    subId, enableSatellite, enableDemoMode, callback);
+        }
     }
 
     /**
@@ -13077,6 +13090,22 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
     public void requestIsDemoModeEnabled(int subId, @NonNull ResultReceiver result) {
         enforceSatelliteCommunicationPermission("requestIsDemoModeEnabled");
         mSatelliteController.requestIsDemoModeEnabled(subId, result);
+    }
+
+    /**
+     * Request to get whether the satellite service is enabled with emergency mode.
+     *
+     * @param subId The subId of the subscription to check whether the satellite demo mode
+     *              is enabled for.
+     * @param result The result receiver that returns whether the satellite emergency mode is
+     *               enabled if the request is successful or an error code if the request failed.
+     *
+     * @throws SecurityException if the caller doesn't have the required permission.
+     */
+    @Override
+    public void requestIsEmergencyModeEnabled(int subId, @NonNull ResultReceiver result) {
+        enforceSatelliteCommunicationPermission("requestIsEmergencyModeEnabled");
+        result.send(SATELLITE_RESULT_REQUEST_NOT_SUPPORTED, null);
     }
 
     /**
@@ -13260,15 +13289,15 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
      *
      * @param subId The subId of the subscription to unregister for satellite modem state changed.
      * @param callback The callback that was passed to
-     * {@link #registerForSatelliteModemStateChanged(int, ISatelliteModemStateCallback)}.
+     * {@link #registerForModemStateChanged(int, ISatelliteModemStateCallback)}.
      *
      * @throws SecurityException if the caller doesn't have the required permission.
      */
     @Override
-    public void unregisterForSatelliteModemStateChanged(int subId,
+    public void unregisterForModemStateChanged(int subId,
             @NonNull ISatelliteModemStateCallback callback) {
-        enforceSatelliteCommunicationPermission("unregisterForSatelliteModemStateChanged");
-        mSatelliteController.unregisterForSatelliteModemStateChanged(subId, callback);
+        enforceSatelliteCommunicationPermission("unregisterForModemStateChanged");
+        mSatelliteController.unregisterForModemStateChanged(subId, callback);
     }
 
     /**
@@ -13282,10 +13311,10 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
      * @throws SecurityException if the caller doesn't have the required permission.
      */
     @Override
-    @SatelliteManager.SatelliteResult public int registerForSatelliteDatagram(int subId,
+    @SatelliteManager.SatelliteResult public int registerForIncomingDatagram(int subId,
             @NonNull ISatelliteDatagramCallback callback) {
-        enforceSatelliteCommunicationPermission("registerForSatelliteDatagram");
-        return mSatelliteController.registerForSatelliteDatagram(subId, callback);
+        enforceSatelliteCommunicationPermission("registerForIncomingDatagram");
+        return mSatelliteController.registerForIncomingDatagram(subId, callback);
     }
 
     /**
@@ -13294,15 +13323,15 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
      *
      * @param subId The subId of the subscription to unregister for incoming satellite datagrams.
      * @param callback The callback that was passed to
-     *                 {@link #registerForSatelliteDatagram(int, ISatelliteDatagramCallback)}.
+     *                 {@link #registerForIncomingDatagram(int, ISatelliteDatagramCallback)}.
      *
      * @throws SecurityException if the caller doesn't have the required permission.
      */
     @Override
-    public void unregisterForSatelliteDatagram(int subId,
+    public void unregisterForIncomingDatagram(int subId,
             @NonNull ISatelliteDatagramCallback callback) {
-        enforceSatelliteCommunicationPermission("unregisterForSatelliteDatagram");
-        mSatelliteController.unregisterForSatelliteDatagram(subId, callback);
+        enforceSatelliteCommunicationPermission("unregisterForIncomingDatagram");
+        mSatelliteController.unregisterForIncomingDatagram(subId, callback);
     }
 
     /**
@@ -13317,10 +13346,9 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
      *
      * @throws SecurityException if the caller doesn't have required permission.
      */
-    @Override
-    public void pollPendingSatelliteDatagrams(int subId, IIntegerConsumer callback) {
-        enforceSatelliteCommunicationPermission("pollPendingSatelliteDatagrams");
-        mSatelliteController.pollPendingSatelliteDatagrams(subId, callback);
+    public void pollPendingDatagrams(int subId, IIntegerConsumer callback) {
+        enforceSatelliteCommunicationPermission("pollPendingDatagrams");
+        mSatelliteController.pollPendingDatagrams(subId, callback);
     }
 
     /**
@@ -13342,12 +13370,12 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
      * @throws SecurityException if the caller doesn't have required permission.
      */
     @Override
-    public void sendSatelliteDatagram(int subId, @SatelliteManager.DatagramType int datagramType,
+    public void sendDatagram(int subId, @SatelliteManager.DatagramType int datagramType,
             @NonNull SatelliteDatagram datagram, boolean needFullScreenPointingUI,
             @NonNull IIntegerConsumer callback) {
-        enforceSatelliteCommunicationPermission("sendSatelliteDatagram");
-        mSatelliteController.sendSatelliteDatagram(subId, datagramType, datagram,
-                needFullScreenPointingUI, callback);
+        enforceSatelliteCommunicationPermission("sendDatagram");
+        mSatelliteController.sendDatagram(subId, datagramType, datagram, needFullScreenPointingUI,
+                callback);
     }
 
     /**
@@ -13362,12 +13390,11 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
      * @throws SecurityException if the caller doesn't have the required permission.
      */
     @Override
-    public void requestIsSatelliteCommunicationAllowedForCurrentLocation(int subId,
+    public void requestIsCommunicationAllowedForCurrentLocation(int subId,
             @NonNull ResultReceiver result) {
-        enforceSatelliteCommunicationPermission(
-                "requestIsSatelliteCommunicationAllowedForCurrentLocation");
-        mSatelliteAccessController.requestIsSatelliteCommunicationAllowedForCurrentLocation(
-                subId, result);
+        enforceSatelliteCommunicationPermission("requestIsCommunicationAllowedForCurrentLocation");
+        mSatelliteAccessController.requestIsCommunicationAllowedForCurrentLocation(subId,
+                result);
     }
 
     /**
@@ -13412,13 +13439,13 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
      *
      * @throws SecurityException if the caller doesn't have required permission.
      */
-    public void addSatelliteAttachRestrictionForCarrier(int subId,
+    public void addAttachRestrictionForCarrier(int subId,
             @SatelliteManager.SatelliteCommunicationRestrictionReason int reason,
             @NonNull IIntegerConsumer callback) {
-        enforceSatelliteCommunicationPermission("addSatelliteAttachRestrictionForCarrier");
+        enforceSatelliteCommunicationPermission("addAttachRestrictionForCarrier");
         final long identity = Binder.clearCallingIdentity();
         try {
-            mSatelliteController.addSatelliteAttachRestrictionForCarrier(subId, reason, callback);
+            mSatelliteController.addAttachRestrictionForCarrier(subId, reason, callback);
         } finally {
             Binder.restoreCallingIdentity(identity);
         }
@@ -13435,14 +13462,13 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
      *
      * @throws SecurityException if the caller doesn't have required permission.
      */
-    public void removeSatelliteAttachRestrictionForCarrier(int subId,
+    public void removeAttachRestrictionForCarrier(int subId,
             @SatelliteManager.SatelliteCommunicationRestrictionReason int reason,
             @NonNull IIntegerConsumer callback) {
-        enforceSatelliteCommunicationPermission("removeSatelliteAttachRestrictionForCarrier");
+        enforceSatelliteCommunicationPermission("removeAttachRestrictionForCarrier");
         final long identity = Binder.clearCallingIdentity();
         try {
-            mSatelliteController.removeSatelliteAttachRestrictionForCarrier(subId, reason,
-                    callback);
+            mSatelliteController.removeAttachRestrictionForCarrier(subId, reason, callback);
         } finally {
             Binder.restoreCallingIdentity(identity);
         }
@@ -13458,13 +13484,13 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
      *
      * @throws SecurityException if the caller doesn't have the required permission.
      */
-    public @NonNull int[] getSatelliteAttachRestrictionReasonsForCarrier(
+    public @NonNull int[] getAttachRestrictionReasonsForCarrier(
             int subId) {
-        enforceSatelliteCommunicationPermission("getSatelliteAttachRestrictionReasonsForCarrier");
+        enforceSatelliteCommunicationPermission("getAttachRestrictionReasonsForCarrier");
         final long identity = Binder.clearCallingIdentity();
         try {
             Set<Integer> reasonSet =
-                    mSatelliteController.getSatelliteAttachRestrictionReasonsForCarrier(subId);
+                    mSatelliteController.getAttachRestrictionReasonsForCarrier(subId);
             return reasonSet.stream().mapToInt(i->i).toArray();
         } finally {
             Binder.restoreCallingIdentity(identity);
@@ -13552,12 +13578,12 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
      * @throws SecurityException if the caller doesn't have required permission.
      */
     @Override
-    @SatelliteManager.SatelliteResult public int registerForSatelliteCapabilitiesChanged(
+    @SatelliteManager.SatelliteResult public int registerForCapabilitiesChanged(
             int subId, @NonNull ISatelliteCapabilitiesCallback callback) {
-        enforceSatelliteCommunicationPermission("registerForSatelliteCapabilitiesChanged");
+        enforceSatelliteCommunicationPermission("registerForCapabilitiesChanged");
         final long identity = Binder.clearCallingIdentity();
         try {
-            return mSatelliteController.registerForSatelliteCapabilitiesChanged(subId, callback);
+            return mSatelliteController.registerForCapabilitiesChanged(subId, callback);
         } finally {
             Binder.restoreCallingIdentity(identity);
         }
@@ -13569,17 +13595,17 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
      *
      * @param subId The subId of the subscription to unregister for satellite capabilities change.
      * @param callback The callback that was passed to.
-     * {@link #registerForSatelliteCapabilitiesChanged(int, ISatelliteCapabilitiesCallback)}.
+     * {@link #registerForCapabilitiesChanged(int, ISatelliteCapabilitiesCallback)}.
      *
      * @throws SecurityException if the caller doesn't have required permission.
      */
     @Override
-    public void unregisterForSatelliteCapabilitiesChanged(
-            int subId, @NonNull ISatelliteCapabilitiesCallback callback) {
-        enforceSatelliteCommunicationPermission("unregisterForSatelliteCapabilitiesChanged");
+    public void unregisterForCapabilitiesChanged(int subId,
+            @NonNull ISatelliteCapabilitiesCallback callback) {
+        enforceSatelliteCommunicationPermission("unregisterForCapabilitiesChanged");
         final long identity = Binder.clearCallingIdentity();
         try {
-            mSatelliteController.unregisterForSatelliteCapabilitiesChanged(subId, callback);
+            mSatelliteController.unregisterForCapabilitiesChanged(subId, callback);
         } finally {
             Binder.restoreCallingIdentity(identity);
         }
@@ -13658,20 +13684,43 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
     }
 
     /**
-     * This API can be used by only CTS to update the timeout duration in milliseconds whether
-     * the device is aligned with the satellite for demo mode
+     * This API can be used by only CTS to override the timeout durations used by the
+     * DatagramController module.
      *
      * @param timeoutMillis The timeout duration in millisecond.
      * @return {@code true} if the timeout duration is set successfully, {@code false} otherwise.
      */
-    public boolean setSatelliteDeviceAlignedTimeoutDuration(long timeoutMillis) {
-        Log.d(LOG_TAG, "setDeviceAlignedTimeoutDuration - " + timeoutMillis);
+    public boolean setDatagramControllerTimeoutDuration(
+            boolean reset, int timeoutType, long timeoutMillis) {
+        Log.d(LOG_TAG, "setDatagramControllerTimeoutDuration - " + timeoutMillis + ", reset="
+                + reset + ", timeoutMillis=" + timeoutMillis);
         TelephonyPermissions.enforceShellOnly(
-                Binder.getCallingUid(), "setDeviceAlignedTimeoutDuration");
+                Binder.getCallingUid(), "setDatagramControllerTimeoutDuration");
         TelephonyPermissions.enforceCallingOrSelfModifyPermissionOrCarrierPrivilege(mApp,
                 SubscriptionManager.INVALID_SUBSCRIPTION_ID,
-                "setDeviceAlignedTimeoutDuration");
-        return mSatelliteController.setSatelliteDeviceAlignedTimeoutDuration(timeoutMillis);
+                "setDatagramControllerTimeoutDuration");
+        return mSatelliteController.setDatagramControllerTimeoutDuration(
+                reset, timeoutType, timeoutMillis);
+    }
+
+    /**
+     * This API can be used by only CTS to override the timeout durations used by the
+     * SatelliteController module.
+     *
+     * @param timeoutMillis The timeout duration in millisecond.
+     * @return {@code true} if the timeout duration is set successfully, {@code false} otherwise.
+     */
+    public boolean setSatelliteControllerTimeoutDuration(
+            boolean reset, int timeoutType, long timeoutMillis) {
+        Log.d(LOG_TAG, "setSatelliteControllerTimeoutDuration - " + timeoutMillis + ", reset="
+                + reset + ", timeoutMillis=" + timeoutMillis);
+        TelephonyPermissions.enforceShellOnly(
+                Binder.getCallingUid(), "setSatelliteControllerTimeoutDuration");
+        TelephonyPermissions.enforceCallingOrSelfModifyPermissionOrCarrierPrivilege(mApp,
+                SubscriptionManager.INVALID_SUBSCRIPTION_ID,
+                "setSatelliteControllerTimeoutDuration");
+        return mSatelliteController.setSatelliteControllerTimeoutDuration(
+                reset, timeoutType, timeoutMillis);
     }
 
     /**
@@ -13696,6 +13745,25 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
                 "setEmergencyCallToSatelliteHandoverType");
         return mSatelliteController.setEmergencyCallToSatelliteHandoverType(
                 handoverType, delaySeconds);
+    }
+
+    /**
+     * This API can be used in only testing to override oem-enabled satellite provision status.
+     *
+     * @param reset {@code true} mean the overriding status should not be used, {@code false}
+     *              otherwise.
+     * @param isProvisioned The overriding provision status.
+     * @return {@code true} if the provision status is set successfully, {@code false} otherwise.
+     */
+    public boolean setOemEnabledSatelliteProvisionStatus(boolean reset, boolean isProvisioned) {
+        Log.d(LOG_TAG, "setOemEnabledSatelliteProvisionStatus - reset=" + reset
+                + ", isProvisioned=" + isProvisioned);
+        TelephonyPermissions.enforceShellOnly(
+                Binder.getCallingUid(), "setOemEnabledSatelliteProvisionStatus");
+        TelephonyPermissions.enforceCallingOrSelfModifyPermissionOrCarrierPrivilege(mApp,
+                SubscriptionManager.INVALID_SUBSCRIPTION_ID,
+                "setOemEnabledSatelliteProvisionStatus");
+        return mSatelliteController.setOemEnabledSatelliteProvisionStatus(reset, isProvisioned);
     }
 
     /**
@@ -13774,6 +13842,62 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
     }
 
     /**
+     * Sets the service defined in ComponentName to be bound.
+     *
+     * This should only be used for testing.
+     * @return {@code true} if the DomainSelectionService to bind to was set,
+     *         {@code false} otherwise.
+     */
+    @Override
+    public boolean setDomainSelectionServiceOverride(ComponentName componentName) {
+        Log.i(LOG_TAG, "setDomainSelectionServiceOverride component=" + componentName);
+
+        TelephonyPermissions.enforceShellOnly(Binder.getCallingUid(),
+                "setDomainSelectionServiceOverride");
+        TelephonyPermissions.enforceCallingOrSelfModifyPermissionOrCarrierPrivilege(mApp,
+                getDefaultSubscription(), "setDomainSelectionServiceOverride");
+
+        final long identity = Binder.clearCallingIdentity();
+        try {
+            if (DomainSelectionResolver.getInstance().isDomainSelectionSupported()) {
+                return DomainSelectionResolver.getInstance()
+                        .setDomainSelectionServiceOverride(componentName);
+            }
+        } finally {
+            Binder.restoreCallingIdentity(identity);
+        }
+        return false;
+    }
+
+    /**
+     * Clears the DomainSelectionService override.
+     *
+     * This should only be used for testing.
+     * @return {@code true} if the DomainSelectionService override was cleared,
+     *         {@code false} otherwise.
+     */
+    @Override
+    public boolean clearDomainSelectionServiceOverride() {
+        Log.i(LOG_TAG, "clearDomainSelectionServiceOverride");
+
+        TelephonyPermissions.enforceShellOnly(Binder.getCallingUid(),
+                "clearDomainSelectionServiceOverride");
+        TelephonyPermissions.enforceCallingOrSelfModifyPermissionOrCarrierPrivilege(mApp,
+                getDefaultSubscription(), "clearDomainSelectionServiceOverride");
+
+        final long identity = Binder.clearCallingIdentity();
+        try {
+            if (DomainSelectionResolver.getInstance().isDomainSelectionSupported()) {
+                return DomainSelectionResolver.getInstance()
+                        .clearDomainSelectionServiceOverride();
+            }
+        } finally {
+            Binder.restoreCallingIdentity(identity);
+        }
+        return false;
+    }
+
+    /**
      * Enable or disable notifications sent for cellular identifier disclosure events.
      *
      * Disclosure events are defined as instances where a device has sent a cellular identifier
@@ -13824,7 +13948,7 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
      * @hide
      */
     @RequiresPermission(Manifest.permission.MODIFY_PHONE_STATE)
-    public void setEnableNullCipherNotifications(boolean enable) {
+    public void setNullCipherNotificationsEnabled(boolean enable) {
         enforceModifyPermission();
         checkForNullCipherNotificationSupport();
 

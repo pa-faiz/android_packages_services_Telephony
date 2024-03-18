@@ -84,7 +84,6 @@ import com.android.internal.telephony.uicc.UiccProfile;
 import com.android.internal.util.IndentingPrintWriter;
 import com.android.phone.settings.SettingsConstants;
 import com.android.phone.vvm.CarrierVvmPackageInstalledReceiver;
-import com.android.services.telephony.domainselection.TelephonyDomainSelectionService;
 import com.android.services.telephony.rcs.TelephonyRcsService;
 
 import com.qti.extphone.ExtTelephonyManager;
@@ -171,7 +170,6 @@ public class PhoneGlobals extends ContextWrapper {
     public ImsStateCallbackController mImsStateCallbackController;
     public ImsProvisioningController mImsProvisioningController;
     CarrierConfigLoader configLoader;
-    TelephonyDomainSelectionService mDomainSelectionService;
 
     private Phone phoneInEcm;
     private Phone phoneInScbm;
@@ -249,14 +247,14 @@ public class PhoneGlobals extends ContextWrapper {
     private final CarrierVvmPackageInstalledReceiver mCarrierVvmPackageInstalledReceiver =
             new CarrierVvmPackageInstalledReceiver();
 
-    private final SettingsObserver mSettingsObserver;
+    private SettingsObserver mSettingsObserver;
     private BinderCallsStats.SettingsObserver mBinderCallsSettingsObserver;
 
     // Mapping of phone ID to the associated TelephonyCallback. These should be registered without
     // fine or coarse location since we only use ServiceState for
     private PhoneAppCallback[] mTelephonyCallbacks;
 
-    private FeatureFlags mFeatureFlags;
+    private FeatureFlags mFeatureFlags = new FeatureFlagsImpl();
 
     private class PhoneAppCallback extends TelephonyCallback implements
             TelephonyCallback.ServiceStateListener {
@@ -469,13 +467,26 @@ public class PhoneGlobals extends ContextWrapper {
     public PhoneGlobals(Context context) {
         super(context);
         sMe = this;
-        mSettingsObserver = new SettingsObserver(context, mHandler);
+        if (mFeatureFlags.enforceTelephonyFeatureMappingForPublicApis()) {
+            if (getPackageManager().hasSystemFeature(PackageManager.FEATURE_TELEPHONY)) {
+                mSettingsObserver = new SettingsObserver(context, mHandler);
+            }
+        } else {
+            mSettingsObserver = new SettingsObserver(context, mHandler);
+        }
     }
 
     public void onCreate() {
         if (VDBG) Log.v(LOG_TAG, "onCreate()...");
 
         ContentResolver resolver = getContentResolver();
+
+        if (mFeatureFlags.enforceTelephonyFeatureMappingForPublicApis()) {
+            if (!getPackageManager().hasSystemFeature(PackageManager.FEATURE_TELEPHONY)) {
+                Log.v(LOG_TAG, "onCreate()... but not defined FEATURE_TELEPHONY");
+                return;
+            }
+        }
 
         // Initialize the shim from frameworks/opt/telephony into packages/services/Telephony.
         TelephonyLocalConnection.setInstance(new LocalConnectionImpl(this));
@@ -501,18 +512,17 @@ public class PhoneGlobals extends ContextWrapper {
             // Create DomainSelectionResolver always, but it MUST be initialized only when
             // the device supports AOSP domain selection architecture and
             // has new IRadio that supports its related HAL APIs.
-            DomainSelectionResolver.make(this,
-                    getResources().getBoolean(R.bool.config_enable_aosp_domain_selection));
+            String dssComponentName = getResources().getString(
+                    R.string.config_domain_selection_service_component_name);
+            DomainSelectionResolver.make(this, dssComponentName);
 
             // Initialize the telephony framework
-            mFeatureFlags = new FeatureFlagsImpl();
             PhoneFactory.makeDefaultPhones(this, mFeatureFlags);
 
             // Initialize the DomainSelectionResolver after creating the Phone instance
             // to check the Radio HAL version.
             if (DomainSelectionResolver.getInstance().isDomainSelectionSupported()) {
-                mDomainSelectionService = new TelephonyDomainSelectionService(this);
-                DomainSelectionResolver.getInstance().initialize(mDomainSelectionService);
+                DomainSelectionResolver.getInstance().initialize();
                 // Initialize EmergencyStateTracker if domain selection is supported
                 boolean isSuplDdsSwitchRequiredForEmergencyCall = getResources()
                         .getBoolean(R.bool.config_gnss_supl_requires_default_data_for_emergency);
@@ -1224,7 +1234,8 @@ public class PhoneGlobals extends ContextWrapper {
             msg.arg1 = mDefaultDataSubId;
             msg.sendToTarget();
         } else if (dataAllowed && dataIsNowRoaming(mDefaultDataSubId)) {
-            if (!shouldShowRoamingNotification(roamingOperatorNumeric)) {
+            if (!shouldShowRoamingNotification(roamingOperatorNumeric != null
+                        ? roamingOperatorNumeric : phone.getServiceState().getOperatorNumeric())) {
                 Log.d(LOG_TAG, "Skip showing roaming connected notification.");
                 return;
             }
@@ -1444,9 +1455,6 @@ public class PhoneGlobals extends ContextWrapper {
             e.printStackTrace();
         }
         pw.decreaseIndent();
-        if (mDomainSelectionService != null) {
-            mDomainSelectionService.dump(fd, pw, args);
-        }
         pw.decreaseIndent();
         if (mFeatureFlags.reorganizeRoamingNotification()) {
             pw.println("mShownNotificationReasons=" + mShownNotificationReasons);
