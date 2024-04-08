@@ -70,6 +70,7 @@ import com.android.internal.telephony.PhoneConstants;
 import com.android.internal.telephony.PhoneFactory;
 import com.android.internal.telephony.RIL;
 import com.android.internal.telephony.util.QtiImsUtils;
+import com.android.internal.telephony.SimultaneousCallingTracker;
 import com.android.internal.telephony.flags.Flags;
 import com.android.internal.telephony.subscription.SubscriptionManagerService;
 import com.android.phone.PhoneGlobals;
@@ -79,12 +80,17 @@ import com.android.telephony.Rlog;
 
 import java.util.Arrays;
 import java.util.Iterator;
+import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Predicate;
+import java.util.stream.Collectors;
 
 /**
  * Owns all data we have registered with Telecom including handling dynamic addition and
@@ -149,6 +155,7 @@ public class TelecomAccountRegistry {
     final class AccountEntry implements PstnPhoneCapabilitiesNotifier.Listener {
         private final Phone mPhone;
         private PhoneAccount mAccount;
+        private SimultaneousCallingTracker mSCT;
         private final PstnPhoneCapabilitiesNotifier mPhoneCapabilitiesNotifier;
         private boolean mIsEmergency;
         private boolean mIsRttCapable;
@@ -158,6 +165,7 @@ public class TelecomAccountRegistry {
         private MmTelFeature.MmTelCapabilities mMmTelCapabilities;
         private ImsMmTelManager.CapabilityCallback mMmtelCapabilityCallback;
         private RegistrationManager.RegistrationCallback mImsRegistrationCallback;
+        private SimultaneousCallingTracker.Listener mSimultaneousCallingTrackerListener;
         private ImsMmTelManager mMmTelManager;
         private final boolean mIsTestAccount;
         private boolean mIsVideoCapable;
@@ -172,12 +180,18 @@ public class TelecomAccountRegistry {
         private boolean mIsShowPreciseFailedCause;
         private final FeatureConnector<ImsManager> mImsManagerConnector;
         private int mSubId;
+        private Set<Integer> mSimultaneousCallSupportedSubIds;
 
         AccountEntry(Phone phone, boolean isEmergency, boolean isTest) {
             mPhone = phone;
             mIsEmergency = isEmergency;
             mIsTestAccount = isTest;
             mIsAdhocConfCapable = mPhone.isImsRegistered();
+            if (Flags.simultaneousCallingIndications()) {
+                mSCT = SimultaneousCallingTracker.getInstance();
+                mSimultaneousCallSupportedSubIds =
+                        mSCT.getSubIdsSupportingSimultaneousCalling(mPhone.getSubId());
+            }
             mAccount = registerPstnPhoneAccount(isEmergency, isTest);
             mSubId = getSubId();
             Log.i(this, "Registered phoneAccount: %s with handle: %s, subId: %d",
@@ -242,12 +256,31 @@ public class TelecomAccountRegistry {
                 }
             };
             mImsManagerConnector.connect();
+
+            if (Flags.simultaneousCallingIndications()) {
+                //Register SimultaneousCallingTracker listener:
+                mSimultaneousCallingTrackerListener = new SimultaneousCallingTracker.Listener() {
+                    @Override
+                    public void onSimultaneousCallingSupportChanged(Map<Integer,
+                            Set<Integer>> simultaneousCallSubSupportMap) {
+                        updateSimultaneousCallSubSupportMap(simultaneousCallSubSupportMap);
+                    }
+                };
+                SimultaneousCallingTracker.getInstance()
+                        .addListener(mSimultaneousCallingTrackerListener);
+                Log.d(LOG_TAG, "Finished registering mSimultaneousCallingTrackerListener for "
+                        + "phoneId = " + mPhone.getPhoneId() + "; subId = " + mPhone.getSubId());
+            }
         }
 
         void teardown() {
             mPhoneCapabilitiesNotifier.teardown();
             if (mMmTelManager != null && mMmtelCapabilityCallback != null) {
                 mMmTelManager.unregisterMmTelCapabilityCallback(mMmtelCapabilityCallback);
+            }
+            if (Flags.simultaneousCallingIndications()) {
+                SimultaneousCallingTracker.getInstance()
+                        .removeListener(mSimultaneousCallingTrackerListener);
             }
             mImsManagerConnector.disconnect();
         }
@@ -571,7 +604,7 @@ public class TelecomAccountRegistry {
                 Log.i(this, "Adding Merged Account with group: " + Rlog.pii(LOG_TAG, groupId));
             }
 
-            PhoneAccount account = PhoneAccount.builder(phoneAccountHandle, label)
+            PhoneAccount.Builder accountBuilder = PhoneAccount.builder(phoneAccountHandle, label)
                     .setAddress(Uri.fromParts(PhoneAccount.SCHEME_TEL, line1Number, null))
                     .setSubscriptionAddress(
                             Uri.fromParts(PhoneAccount.SCHEME_TEL, subNumber, null))
@@ -582,10 +615,19 @@ public class TelecomAccountRegistry {
                     .setSupportedUriSchemes(Arrays.asList(
                             PhoneAccount.SCHEME_TEL, PhoneAccount.SCHEME_VOICEMAIL))
                     .setExtras(extras)
-                    .setGroupId(groupId)
-                    .build();
+                    .setGroupId(groupId);
 
-            return account;
+            if (Flags.simultaneousCallingIndications()) {
+                Set <PhoneAccountHandle> simultaneousCallingHandles =
+                        mSimultaneousCallSupportedSubIds.stream()
+                                .map(subscriptionId -> PhoneUtils.makePstnPhoneAccountHandleWithId(
+                                        String.valueOf(subscriptionId), userToRegister))
+                                .collect(Collectors.toSet());
+                accountBuilder.setSimultaneousCallingRestriction(simultaneousCallingHandles);
+            }
+
+
+            return accountBuilder.build();
         }
 
         public PhoneAccountHandle getPhoneAccountHandle() {
@@ -903,6 +945,30 @@ public class TelecomAccountRegistry {
                 }
                 if (isVideoCapable != mIsVideoCapable) {
                     mIsVideoCapable = isVideoCapable;
+                    mAccount = registerPstnPhoneAccount(mIsEmergency, mIsTestAccount);
+                }
+            }
+        }
+
+        public void updateSimultaneousCallSubSupportMap(Map<Integer,
+                Set<Integer>> simultaneousCallSubSupportMap) {
+            if (!Flags.simultaneousCallingIndications()) { return; }
+            //Check if the simultaneous call support subIds for this account have changed:
+            Set<Integer> updatedSimultaneousCallSupportSubIds = new HashSet<>(3);
+            updatedSimultaneousCallSupportSubIds.addAll(
+                    simultaneousCallSubSupportMap.get(mPhone.getSubId()));
+            if (!updatedSimultaneousCallSupportSubIds.equals(mSimultaneousCallSupportedSubIds)) {
+                //If necessary, update cache and re-register mAccount:
+                mSimultaneousCallSupportedSubIds = updatedSimultaneousCallSupportSubIds;
+                synchronized (mAccountsLock) {
+                    if (!mAccounts.contains(this)) {
+                        // Account has already been torn down, don't try to register it again.
+                        // This handles the case where teardown has already happened, and we got a
+                        // simultaneous calling support update that lost the race for the
+                        // mAccountsLock. In such a scenario by the time we get here, the original
+                        // phone account could have been torn down.
+                        return;
+                    }
                     mAccount = registerPstnPhoneAccount(mIsEmergency, mIsTestAccount);
                 }
             }
@@ -1895,6 +1961,35 @@ public class TelecomAccountRegistry {
                     mAccounts.add(new AccountEntry(PhoneFactory.getPhone(
                             PhoneUtils.getPrimaryStackPhoneId()), true /* emergency */,
                             false /* isTest */));
+                }
+
+                // In some very rare cases, when setting the default voice sub in
+                // SubscriptionManagerService, the phone accounts here have not yet been built.
+                // So calling setUserSelectedOutgoingPhoneAccount in SubscriptionManagerService
+                // becomes a no-op. The workaround here is to reconcile and make sure the
+                // outgoing phone account is properly set in telecom.
+                int defaultVoiceSubId = SubscriptionManager.getDefaultVoiceSubscriptionId();
+                if (SubscriptionManager.isValidSubscriptionId(defaultVoiceSubId)) {
+                    PhoneAccountHandle defaultVoiceAccountHandle =
+                            getPhoneAccountHandleForSubId(defaultVoiceSubId);
+                    if (defaultVoiceAccountHandle != null) {
+                        PhoneAccountHandle currentAccount = mTelecomManager
+                                .getUserSelectedOutgoingPhoneAccount();
+                        // In some rare cases, the current phone account could be non-telephony
+                        // phone account. We do not override in this case.
+                        boolean wasPreviousAccountSameComponentOrUnset = currentAccount == null
+                                || Objects.equals(defaultVoiceAccountHandle.getComponentName(),
+                                currentAccount.getComponentName());
+
+                        // Set the phone account again if it's out-of-sync.
+                        if (!defaultVoiceAccountHandle.equals(currentAccount)
+                                && wasPreviousAccountSameComponentOrUnset) {
+                            Log.d(this, "setupAccounts: Re-setup phone account "
+                                    + "again for default voice sub " + defaultVoiceSubId);
+                            mTelecomManager.setUserSelectedOutgoingPhoneAccount(
+                                    defaultVoiceAccountHandle);
+                        }
+                    }
                 }
             }
 

@@ -186,6 +186,9 @@
     <!-- Needed to register for UWB state changes for satellite communication -->
     <uses-permission android:name="android.permission.UWB_PRIVILEGED"/>
 
+    <!-- Needed to initiate configuration update -->
+    <uses-permission android:name="android.permission.UPDATE_CONFIG"/>
+
     <uses-permission android:name="com.qti.permission.BIND_QTI_IMS_SERVICE" />
     <uses-permission android:name="com.qualcomm.qti.permission.USE_EXT_TELEPHONY_SERVICE" />
     <uses-permission android:name="com.qti.permission.RECEIVE_SMS_CALLBACK_MODE" />
@@ -641,13 +644,24 @@
             </intent-filter>
         </receiver>
 
+        <!-- Update configuration data file -->
+        <receiver android:name="com.android.internal.telephony.configupdate.TelephonyConfigUpdateInstallReceiver"
+            android:exported="true"
+            android:permission="android.permission.UPDATE_CONFIG">
+            <intent-filter>
+                <action android:name="android.os.action.UPDATE_CONFIG" />
+                <data android:scheme="content" android:host="*" android:mimeType="*/*" />
+            </intent-filter>
+        </receiver>
+
         <receiver
             android:name="com.android.internal.telephony.uicc.ShowInstallAppNotificationReceiver"
             android:exported="false"/>
 
         <receiver
             android:name=".security.SafetySourceReceiver"
-            android:exported="false">
+            android:exported="false"
+            androidprv:systemUserOnly="true">
             <intent-filter>
                 <action android:name="android.safetycenter.action.REFRESH_SAFETY_SOURCES"/>
             </intent-filter>
