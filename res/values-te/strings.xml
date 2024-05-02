@@ -559,7 +559,8 @@
     <string name="incall_error_supp_service_hold" msgid="8535056414643540997">"కాల్స్‌ను హోల్డ్ చేయలేరు."</string>
     <string name="incall_error_wfc_only_no_wireless_network" msgid="5860742792811400109">"కాల్ చేయడానికి వైర్‌లెస్ నెట్‌వర్క్‌కు కనెక్ట్ చేయండి."</string>
     <string name="incall_error_promote_wfc" msgid="9164896813931363415">"కాల్‌ను చేయడానికి Wi-Fi కాలింగ్‌ను ప్రారంభించండి."</string>
-    <string name="incall_error_satellite_enabled" msgid="1936541518147323016">"కాల్ చేయడానికి ఉపగ్రహ మోడ్‌ను డిజేబుల్ చేయండి."</string>
+    <string name="incall_error_satellite_enabled" msgid="5247740814607087814">"కాల్ చేయడానికి, ముందుగా శాటిలైట్ కనెక్షన్‌ను ముగించండి."</string>
+    <string name="incall_error_carrier_roaming_satellite_mode" msgid="678603203562886361">"మీరు మొబైల్ లేదా Wi-Fi నెట్‌వర్క్ లేకుండా మెసేజ్‌లను పంపవచ్చు, స్వీకరించవచ్చు."</string>
     <string name="emergency_information_hint" msgid="9208897544917793012">"అత్యవసర సమాచారం"</string>
     <string name="emergency_information_owner_hint" msgid="6256909888049185316">"యజమాని"</string>
     <string name="emergency_information_confirm_hint" msgid="5109017615894918914">"సమాచారాన్ని చూడడానికి మళ్లీ నొక్కండి"</string>
@@ -671,7 +672,7 @@
     <string name="enable_video_calling_title" msgid="7246600931634161830">"వీడియో కాలింగ్‌ని ఆన్ చేయండి"</string>
     <string name="enable_video_calling_dialog_msg" msgid="7141478720386203540">"వీడియో కాలింగ్‌ను ఆన్ చేయడానికి, మీరు నెట్‌వర్క్ సెట్టింగ్‌ల్లో మెరుగుపరిచిన 4G LTE మోడ్‌ను ప్రారంభించాలి."</string>
     <string name="enable_video_calling_dialog_settings" msgid="8697890611305307110">"నెట్‌వర్క్ సెట్టింగ్‌లు"</string>
-    <string name="enable_video_calling_dialog_close" msgid="4298929725917045270">"మూసివేయి"</string>
+    <string name="enable_video_calling_dialog_close" msgid="4298929725917045270">"మూసివేయండి"</string>
     <string name="sim_label_emergency_calls" msgid="9078241989421522310">"అత్యవసర కాల్స్‌"</string>
     <string name="sim_description_emergency_calls" msgid="5146872803938897296">"అత్యవసర కాలింగ్ మాత్రమే"</string>
     <string name="sim_description_default" msgid="7474671114363724971">"SIM కార్డ్, స్లాట్: <xliff:g id="SLOT_ID">%s</xliff:g>"</string>

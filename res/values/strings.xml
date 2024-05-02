@@ -1285,7 +1285,9 @@
     <!-- In-call screen: call failure message displayed in an error dialog when the user is connected to a wireless network, but wifi calling is turned off. [CHAR_LIMIT=NONE] -->
     <string name="incall_error_promote_wfc">Enable Wi-Fi calling to make a call.</string>
     <!-- In-call screen: call failure message displayed in an error dialog when the satellite modem is on. [CHAR_LIMIT=NONE] -->
-    <string name="incall_error_satellite_enabled">Disable satellite mode to make a call.</string>
+    <string name="incall_error_satellite_enabled">To make a call, first end the satellite connection.</string>
+    <!-- In-call screen: call failure message displayed in an error dialog when device is connected to carrier roaming satellite network [CHAR_LIMIT=NONE] -->
+    <string name="incall_error_carrier_roaming_satellite_mode">You can send and receive messages without a mobile or Wi-Fi network.</string>
 
     <!-- Hint for the button of emergency information -->
     <string name="emergency_information_hint">Emergency information</string>
@@ -2011,8 +2013,6 @@
     <string name="supp_service_held_call_released">Held call has been released.</string>
     <string name="srvcc_video_message">"Video call is downgraded to 2G/3G voice call due to 4G network is not available."</string>
     <string name="srvcc_message">"4G voice call is downgraded to 2G/3G voice call due to 4G network is not available."</string>
-    <string name="ut_not_support">UT is not available</string>
-    <string name="ct_ut_not_support_close_4glte">UT is not available, please turn off Enhanced 4G LTE Mode in Settings</string>
 
     <!-- In-call screen: error message shown when the user attempts to place a call, but the device
          is currently in the process of being provisioned for service.  Provisioning is the process
@@ -2095,6 +2095,9 @@
 
     <!-- Title for simulating device out of service. -->
     <string name="simulate_out_of_service_string">Simulate Out of Service (Debug Build only)</string>
+
+    <!-- Title for simulating SIM capable of satellite. -->
+    <string name="mock_carrier_roaming_satellite_string">Mock Carrier Satellite Mode (Debug Build only)</string>
 
     <!-- Phone Info screen. Menu item label.  Used for diagnostic info screens, precise translation isn't needed -->
     <string name="radioInfo_menu_viewADN">View SIM Address Book</string>
