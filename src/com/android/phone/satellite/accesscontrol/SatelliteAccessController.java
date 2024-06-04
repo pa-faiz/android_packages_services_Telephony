@@ -38,8 +38,10 @@ import android.os.Bundle;
 import android.os.CancellationSignal;
 import android.os.Handler;
 import android.os.HandlerThread;
+import android.os.IBinder;
 import android.os.Looper;
 import android.os.Message;
+import android.os.RemoteException;
 import android.os.ResultReceiver;
 import android.os.SystemClock;
 import android.os.SystemProperties;
@@ -47,6 +49,7 @@ import android.provider.DeviceConfig;
 import android.telecom.TelecomManager;
 import android.telephony.AnomalyReporter;
 import android.telephony.Rlog;
+import android.telephony.satellite.ISatelliteCommunicationAllowedStateCallback;
 import android.telephony.satellite.SatelliteManager;
 import android.text.TextUtils;
 import android.util.Pair;
@@ -58,7 +61,9 @@ import com.android.internal.telephony.PhoneFactory;
 import com.android.internal.telephony.TelephonyCountryDetector;
 import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.internal.telephony.satellite.SatelliteConfig;
+import com.android.internal.telephony.satellite.SatelliteConstants;
 import com.android.internal.telephony.satellite.SatelliteController;
+import com.android.internal.telephony.satellite.metrics.ConfigUpdaterMetricsStats;
 import com.android.internal.telephony.util.TelephonyUtils;
 import com.android.phone.PhoneGlobals;
 
@@ -79,6 +84,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
@@ -158,12 +164,12 @@ public class SatelliteAccessController extends Handler {
     @NonNull
     private final Map<SatelliteOnDeviceAccessController.LocationToken, Boolean>
             mCachedAccessRestrictionMap = new LinkedHashMap<>() {
-               @Override
-               protected boolean removeEldestEntry(
-                       Entry<SatelliteOnDeviceAccessController.LocationToken, Boolean> eldest) {
-                   return size() > MAX_CACHE_SIZE;
-               }
-           };
+        @Override
+        protected boolean removeEldestEntry(
+                Entry<SatelliteOnDeviceAccessController.LocationToken, Boolean> eldest) {
+            return size() > MAX_CACHE_SIZE;
+        }
+    };
     @GuardedBy("mLock")
     @Nullable
     CancellationSignal mLocationRequestCancellationSignal = null;
@@ -186,6 +192,17 @@ public class SatelliteAccessController extends Handler {
     private static final String CONFIG_UPDATER_SATELLITE_IS_ALLOW_ACCESS_CONTROL_KEY =
             "config_updater_satellite_is_allow_access_control";
     private SharedPreferences mSharedPreferences;
+    private final ConfigUpdaterMetricsStats mConfigUpdaterMetricsStats;
+
+    /**
+     * Map key: binder of the callback, value: callback to receive the satellite communication
+     * allowed state changed events.
+     */
+    private final ConcurrentHashMap<IBinder, ISatelliteCommunicationAllowedStateCallback>
+            mSatelliteCommunicationAllowedStateChangedListeners = new ConcurrentHashMap<>();
+    private final Object mSatelliteCommunicationAllowStateLock = new Object();
+    @GuardedBy("mSatelliteCommunicationAllowStateLock")
+    private boolean mCurrentSatelliteAllowedState = false;
 
     /**
      * Create a SatelliteAccessController instance.
@@ -227,8 +244,21 @@ public class SatelliteAccessController extends Handler {
                 handleIsSatelliteSupportedResult(resultCode, resultData);
             }
         };
+        mConfigUpdaterMetricsStats = ConfigUpdaterMetricsStats.getOrCreateInstance();
         // Init the SatelliteOnDeviceAccessController so that the S2 level can be cached
         initSatelliteOnDeviceAccessController();
+    }
+
+    private void updateCurrentSatelliteAllowedState(boolean isAllowed) {
+        logd("updateCurrentSatelliteAllowedState");
+        synchronized (mSatelliteCommunicationAllowStateLock) {
+            if (isAllowed != mCurrentSatelliteAllowedState) {
+                logd("updatedValue = " + isAllowed + " | mCurrentSatelliteAllowedState = "
+                        + mCurrentSatelliteAllowedState);
+                mCurrentSatelliteAllowedState = isAllowed;
+                notifySatelliteCommunicationAllowedStateChanged(isAllowed);
+            }
+        }
     }
 
     /** @return the singleton instance of {@link SatelliteAccessController} */
@@ -512,41 +542,55 @@ public class SatelliteAccessController extends Handler {
         SatelliteConfig satelliteConfig = mSatelliteController.getSatelliteConfig();
         if (satelliteConfig == null) {
             loge("satelliteConfig is null");
+            mConfigUpdaterMetricsStats.reportOemAndCarrierConfigError(
+                    SatelliteConstants.CONFIG_UPDATE_RESULT_NO_SATELLITE_DATA);
             return;
         }
 
         List<String> satelliteCountryCodes = satelliteConfig.getDeviceSatelliteCountryCodes();
         if (!isValidCountryCodes(satelliteCountryCodes)) {
             logd("country codes is invalid");
+            mConfigUpdaterMetricsStats.reportOemConfigError(
+                    SatelliteConstants.CONFIG_UPDATE_RESULT_DEVICE_DATA_INVALID_COUNTRY_CODE);
             return;
         }
 
         Boolean isSatelliteDataForAllowedRegion = satelliteConfig.isSatelliteDataForAllowedRegion();
         if (isSatelliteDataForAllowedRegion == null) {
             loge("Satellite allowed is not configured with country codes");
+            mConfigUpdaterMetricsStats.reportOemConfigError(
+                    SatelliteConstants.CONFIG_UPDATE_RESULT_DEVICE_DATA_INVALID_S2_CELL_FILE);
             return;
         }
 
         File configUpdaterS2CellFile = satelliteConfig.getSatelliteS2CellFile(context);
         if (configUpdaterS2CellFile == null || !configUpdaterS2CellFile.exists()) {
             logd("No S2 cell file configured or the file does not exist");
+            mConfigUpdaterMetricsStats.reportOemConfigError(
+                    SatelliteConstants.CONFIG_UPDATE_RESULT_DEVICE_DATA_INVALID_S2_CELL_FILE);
             return;
         }
 
         if (!isS2CellFileValid(configUpdaterS2CellFile)) {
             loge("The configured S2 cell file is not valid");
+            mConfigUpdaterMetricsStats.reportOemConfigError(
+                    SatelliteConstants.CONFIG_UPDATE_RESULT_DEVICE_DATA_INVALID_S2_CELL_FILE);
             return;
         }
 
         File localS2CellFile = copySatS2FileToLocalDirectory(configUpdaterS2CellFile);
         if (localS2CellFile == null || !localS2CellFile.exists()) {
             loge("Fail to copy S2 cell file to local directory");
+            mConfigUpdaterMetricsStats.reportOemConfigError(
+                    SatelliteConstants.CONFIG_UPDATE_RESULT_IO_ERROR);
             return;
         }
 
         if (!updateSharedPreferencesCountryCodes(context, satelliteCountryCodes)) {
             loge("Fail to copy country coeds into shared preferences");
             localS2CellFile.delete();
+            mConfigUpdaterMetricsStats.reportOemConfigError(
+                    SatelliteConstants.CONFIG_UPDATE_RESULT_IO_ERROR);
             return;
         }
 
@@ -554,6 +598,8 @@ public class SatelliteAccessController extends Handler {
                 context, isSatelliteDataForAllowedRegion.booleanValue())) {
             loge("Fail to copy allow access control into shared preferences");
             localS2CellFile.delete();
+            mConfigUpdaterMetricsStats.reportOemConfigError(
+                    SatelliteConstants.CONFIG_UPDATE_RESULT_IO_ERROR);
             return;
         }
 
@@ -573,6 +619,8 @@ public class SatelliteAccessController extends Handler {
             logd("clear mCachedAccessRestrictionMap");
             mCachedAccessRestrictionMap.clear();
         }
+
+        mConfigUpdaterMetricsStats.reportConfigUpdateSuccess();
     }
 
     private void loadOverlayConfigs(@NonNull Context context) {
@@ -695,21 +743,23 @@ public class SatelliteAccessController extends Handler {
                         Bundle bundle = new Bundle();
                         bundle.putBoolean(SatelliteManager.KEY_SATELLITE_COMMUNICATION_ALLOWED,
                                 false);
-                        sendSatelliteAllowResultToReceivers(resultCode, bundle);
+                        sendSatelliteAllowResultToReceivers(resultCode, bundle, false);
                     } else {
                         checkSatelliteAccessRestrictionForCurrentLocation();
                     }
                 } else {
                     loge("KEY_SATELLITE_SUPPORTED does not exist.");
-                    sendSatelliteAllowResultToReceivers(resultCode, resultData);
+                    sendSatelliteAllowResultToReceivers(resultCode, resultData, false);
                 }
             } else {
-                sendSatelliteAllowResultToReceivers(resultCode, resultData);
+                sendSatelliteAllowResultToReceivers(resultCode, resultData, false);
             }
         }
     }
 
-    private void sendSatelliteAllowResultToReceivers(int resultCode, Bundle resultData) {
+    private void sendSatelliteAllowResultToReceivers(int resultCode, Bundle resultData,
+            boolean allowed) {
+        updateCurrentSatelliteAllowedState(allowed);
         synchronized (mLock) {
             for (ResultReceiver resultReceiver : mSatelliteAllowResultReceivers) {
                 resultReceiver.send(resultCode, resultData);
@@ -728,10 +778,10 @@ public class SatelliteAccessController extends Handler {
                 logd("Use current network country codes=" + String.join(", ",
                         networkCountryIsoList));
 
+                boolean allowed = isSatelliteAccessAllowedForLocation(networkCountryIsoList);
                 Bundle bundle = new Bundle();
-                bundle.putBoolean(KEY_SATELLITE_COMMUNICATION_ALLOWED,
-                        isSatelliteAccessAllowedForLocation(networkCountryIsoList));
-                sendSatelliteAllowResultToReceivers(SATELLITE_RESULT_SUCCESS, bundle);
+                bundle.putBoolean(KEY_SATELLITE_COMMUNICATION_ALLOWED, allowed);
+                sendSatelliteAllowResultToReceivers(SATELLITE_RESULT_SUCCESS, bundle, allowed);
             } else {
                 if (shouldUseOnDeviceAccessController()) {
                     // This will be an asynchronous check when it needs to wait for the current
@@ -768,10 +818,10 @@ public class SatelliteAccessController extends Handler {
         }
         logd("Use cached country codes=" + String.join(", ", countryCodeList));
 
+        boolean allowed = isSatelliteAccessAllowedForLocation(countryCodeList);
         Bundle bundle = new Bundle();
-        bundle.putBoolean(KEY_SATELLITE_COMMUNICATION_ALLOWED,
-                isSatelliteAccessAllowedForLocation(countryCodeList));
-        sendSatelliteAllowResultToReceivers(SATELLITE_RESULT_SUCCESS, bundle);
+        bundle.putBoolean(KEY_SATELLITE_COMMUNICATION_ALLOWED, allowed);
+        sendSatelliteAllowResultToReceivers(SATELLITE_RESULT_SUCCESS, bundle, allowed);
     }
 
     /**
@@ -849,7 +899,8 @@ public class SatelliteAccessController extends Handler {
                 }
                 Bundle bundle = new Bundle();
                 bundle.putBoolean(KEY_SATELLITE_COMMUNICATION_ALLOWED, satelliteAllowed);
-                sendSatelliteAllowResultToReceivers(SATELLITE_RESULT_SUCCESS, bundle);
+                sendSatelliteAllowResultToReceivers(SATELLITE_RESULT_SUCCESS, bundle,
+                        satelliteAllowed);
             } catch (Exception ex) {
                 loge("checkSatelliteAccessRestrictionForLocation: ex=" + ex);
                 reportAnomaly(UUID_ON_DEVICE_LOOKUP_EXCEPTION,
@@ -1185,6 +1236,66 @@ public class SatelliteAccessController extends Handler {
     private void sendRequestAsync(int command, @NonNull Object argument) {
         Message msg = this.obtainMessage(command, argument);
         msg.sendToTarget();
+    }
+
+    /**
+     * Registers for the satellite communication allowed state changed.
+     *
+     * @param subId    The subId of the subscription to register for the satellite communication
+     *                 allowed state changed.
+     * @param callback The callback to handle the satellite communication allowed state changed
+     *                 event.
+     * @return The {@link SatelliteManager.SatelliteResult} result of the operation.
+     */
+    @SatelliteManager.SatelliteResult
+    public int registerForCommunicationAllowedStateChanged(int subId,
+            @NonNull ISatelliteCommunicationAllowedStateCallback callback) {
+        if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
+            logd("registerForCommunicationAllowedStateChanged: oemEnabledSatelliteFlag is "
+                    + "disabled");
+            return SatelliteManager.SATELLITE_RESULT_REQUEST_NOT_SUPPORTED;
+        }
+
+        mSatelliteCommunicationAllowedStateChangedListeners.put(callback.asBinder(), callback);
+        return SATELLITE_RESULT_SUCCESS;
+    }
+
+    /**
+     * Unregisters for the satellite communication allowed state changed.
+     * If callback was not registered before, the request will be ignored.
+     *
+     * @param subId    The subId of the subscription to unregister for the satellite communication
+     *                 allowed state changed.
+     * @param callback The callback that was passed to
+     *                 {@link #registerForCommunicationAllowedStateChanged(int,
+     *                 ISatelliteCommunicationAllowedStateCallback)}.
+     */
+    public void unregisterForCommunicationAllowedStateChanged(
+            int subId, @NonNull ISatelliteCommunicationAllowedStateCallback callback) {
+        if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
+            logd("unregisterForCommunicationAllowedStateChanged: "
+                    + "oemEnabledSatelliteFlag is disabled");
+            return;
+        }
+
+        mSatelliteCommunicationAllowedStateChangedListeners.remove(callback.asBinder());
+    }
+
+    private void notifySatelliteCommunicationAllowedStateChanged(boolean allowState) {
+        logd("notifySatelliteCommunicationAllowedStateChanged: allowState=" + allowState);
+
+        List<ISatelliteCommunicationAllowedStateCallback> deadCallersList = new ArrayList<>();
+        mSatelliteCommunicationAllowedStateChangedListeners.values().forEach(listener -> {
+            try {
+                listener.onSatelliteCommunicationAllowedStateChanged(allowState);
+            } catch (RemoteException e) {
+                logd("handleEventNtnSignalStrengthChanged RemoteException: " + e);
+                deadCallersList.add(listener);
+            }
+        });
+        deadCallersList.forEach(listener -> {
+            mSatelliteCommunicationAllowedStateChangedListeners.remove(listener.asBinder());
+        });
     }
 
     private static void logd(@NonNull String log) {
