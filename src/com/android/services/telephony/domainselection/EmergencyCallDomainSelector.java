@@ -149,11 +149,15 @@ public class EmergencyCallDomainSelector extends DomainSelectorBase
             ImsReasonInfo.CODE_LOCAL_NOT_REGISTERED,
             ImsReasonInfo.CODE_SIP_ALTERNATE_EMERGENCY_CALL);
 
+    private static List<Integer> sDisconnectCauseForTerminatation = List.of(
+            SERVICE_OPTION_NOT_AVAILABLE);
+
     private static final LocalLog sLocalLog = new LocalLog(LOG_SIZE);
 
     private static List<String> sSimReadyAllowList;
     private static List<String> sPreferSlotWithNormalServiceList;
     private static List<String> sPreferCsAfterCsfbFailure;
+    private static List<String> sPreferGeranWhenSimAbsent;
 
     /**
      * Network callback used to determine whether Wi-Fi is connected or not.
@@ -163,6 +167,9 @@ public class EmergencyCallDomainSelector extends DomainSelectorBase
                 @Override
                 public void onAvailable(Network network) {
                     logi("onAvailable: " + network);
+                    if (network != null && !mWiFiNetworksAvailable.contains(network)) {
+                        mWiFiNetworksAvailable.add(network);
+                    }
                     mWiFiAvailable = true;
                     sendEmptyMessage(MSG_WIFI_AVAILABLE);
                 }
@@ -170,12 +177,20 @@ public class EmergencyCallDomainSelector extends DomainSelectorBase
                 @Override
                 public void onLost(Network network) {
                     logi("onLost: " + network);
+                    if (network != null) {
+                        mWiFiNetworksAvailable.remove(network);
+                    }
+                    if (!mWiFiNetworksAvailable.isEmpty()) {
+                        logi("onLost: available networks=" + mWiFiNetworksAvailable);
+                        return;
+                    }
                     mWiFiAvailable = false;
                 }
 
                 @Override
                 public void onUnavailable() {
                     logi("onUnavailable");
+                    mWiFiNetworksAvailable.clear();
                     mWiFiAvailable = false;
                 }
             };
@@ -229,6 +244,7 @@ public class EmergencyCallDomainSelector extends DomainSelectorBase
     private boolean mTryEsFallback;
     private boolean mIsWaitingForDataDisconnection;
     private boolean mSwitchRatPreferenceWithLocalNotRegistered;
+    private boolean mTerminateAfterCsFailure;
     private int mModemCount;
 
     /** Indicates whether this instance is deactivated. */
@@ -253,6 +269,7 @@ public class EmergencyCallDomainSelector extends DomainSelectorBase
     private final PowerManager.WakeLock mPartialWakeLock;
     private final CrossSimRedialingController mCrossSimRedialingController;
     private final DataConnectionStateHelper mEpdnHelper;
+    private final List<Network> mWiFiNetworksAvailable = new ArrayList<>();
 
     /** Constructor. */
     public EmergencyCallDomainSelector(Context context, int slotId, int subId,
@@ -361,6 +378,8 @@ public class EmergencyCallDomainSelector extends DomainSelectorBase
             return;
         }
 
+        checkAndSetTerminateAfterCsFailure(result);
+
         if (result.getRegState() != REGISTRATION_STATE_HOME
                 && result.getRegState() != REGISTRATION_STATE_ROAMING) {
             if (maybeRedialOnTheOtherSlotInNormalService(result)) {
@@ -401,7 +420,8 @@ public class EmergencyCallDomainSelector extends DomainSelectorBase
         int domain = result.getDomain();
         if (domain == NetworkRegistrationInfo.DOMAIN_CS) return true;
         if ((domain & NetworkRegistrationInfo.DOMAIN_CS) > 0) {
-            return (!result.isEmcBearerSupported() || !result.isVopsSupported());
+            // b/341865236, check emcBearer only
+            return (!result.isEmcBearerSupported());
         }
         return false;
     }
@@ -436,6 +456,8 @@ public class EmergencyCallDomainSelector extends DomainSelectorBase
             logi("reselectDomain terminate selection");
             return;
         }
+
+        mTerminateAfterCsFailure = false;
 
         if (mTryCsWhenPsFails) {
             mTryCsWhenPsFails = false;
@@ -629,6 +651,7 @@ public class EmergencyCallDomainSelector extends DomainSelectorBase
         mImsRegistered = mImsStateTracker.isImsRegistered();
         logi("onImsRegistrationStateChanged " + mImsRegistered);
         selectDomain();
+        handleImsStateChange();
     }
 
     @Override
@@ -637,6 +660,14 @@ public class EmergencyCallDomainSelector extends DomainSelectorBase
         mIsVoiceCapable = mImsStateTracker.isImsVoiceCapable();
         logi("onImsMmTelCapabilitiesChanged " + mIsVoiceCapable);
         selectDomain();
+        handleImsStateChange();
+    }
+
+    private void handleImsStateChange() {
+        if (!mVoWifiOverEmergencyPdn && !mDomainSelected
+                && (mMaxCellularTimerExpired || mNetworkScanTimerExpired)) {
+            maybeDialOverWlan();
+        }
     }
 
     private boolean isSimReady() {
@@ -785,6 +816,13 @@ public class EmergencyCallDomainSelector extends DomainSelectorBase
         }
         logi("readResourceConfiguration preferCsAfterCsfbFailure="
                 + sPreferCsAfterCsfbFailure);
+
+        if (sPreferGeranWhenSimAbsent == null) {
+            sPreferGeranWhenSimAbsent = readResourceConfiguration(
+                    R.array.config_countries_prefer_geran_when_sim_absent);
+        }
+        logi("readResourceConfiguration preferGeranWhenSimAbsent="
+                + sPreferGeranWhenSimAbsent);
     }
 
     private List<String> readResourceConfiguration(int id) {
@@ -811,6 +849,7 @@ public class EmergencyCallDomainSelector extends DomainSelectorBase
         sSimReadyAllowList = null;
         sPreferSlotWithNormalServiceList = null;
         sPreferCsAfterCsfbFailure = null;
+        sPreferGeranWhenSimAbsent = null;
     }
 
     private void selectDomain() {
@@ -883,6 +922,7 @@ public class EmergencyCallDomainSelector extends DomainSelectorBase
             if (mPsNetworkType == EUTRAN) {
                 onWwanNetworkTypeSelected(mPsNetworkType);
             } else if (mCsNetworkType != UNKNOWN) {
+                checkAndSetTerminateAfterCsFailure(mLastRegResult);
                 onWwanNetworkTypeSelected(mCsNetworkType);
             } else {
                 requestScan(true);
@@ -1036,6 +1076,17 @@ public class EmergencyCallDomainSelector extends DomainSelectorBase
         logi("getNextPreferredNetworks psPriority=" + psPriority + ", csPriority=" + csPriority
                 + ", csPreferred=" + csPreferred + ", esFallback=" + tryEsFallback
                 + ", lastNetworkType=" + accessNetworkTypeToString(mLastNetworkType));
+
+        if (mLastRegResult != null
+                && sPreferGeranWhenSimAbsent.contains(mLastRegResult.getCountryIso())
+                && !isSimReady()) {
+            logi("getNextPreferredNetworks preferGeran");
+            preferredNetworks.add(GERAN);
+            preferredNetworks.add(UTRAN);
+            preferredNetworks.add(EUTRAN);
+            preferredNetworks.add(NGRAN);
+            return preferredNetworks;
+        }
 
         if (!csPreferred && (mLastNetworkType == UNKNOWN || tryEsFallback)) {
             // Generate the list per the domain preference.
@@ -1592,6 +1643,7 @@ public class EmergencyCallDomainSelector extends DomainSelectorBase
             return;
         }
 
+        mWiFiNetworksAvailable.clear();
         ConnectivityManager cm = mContext.getSystemService(ConnectivityManager.class);
         if (cm != null) {
             logi("registerForConnectivityChanges");
@@ -1610,6 +1662,7 @@ public class EmergencyCallDomainSelector extends DomainSelectorBase
             return;
         }
 
+        mWiFiNetworksAvailable.clear();
         ConnectivityManager cm = mContext.getSystemService(ConnectivityManager.class);
         if (cm != null) {
             logi("unregisterForConnectivityChanges");
@@ -1717,7 +1770,6 @@ public class EmergencyCallDomainSelector extends DomainSelectorBase
                 break;
         }
 
-        // If CS call fails, retry always. Otherwise, check the reason code.
         ImsReasonInfo reasonInfo = mSelectionAttributes.getPsDisconnectCause();
         if (mRetryReasonCodes != null && reasonInfo != null) {
             if (!mRetryReasonCodes.contains(reasonInfo.getCode())) {
@@ -1725,6 +1777,13 @@ public class EmergencyCallDomainSelector extends DomainSelectorBase
                 terminateSelection(DisconnectCause.NOT_VALID);
                 return true;
             }
+        } else if (reasonInfo == null
+                && sDisconnectCauseForTerminatation.contains(cause)
+                && mTerminateAfterCsFailure) {
+            // b/341055741
+            logi("maybeTerminateSelection terminate after CS failure");
+            terminateSelection(DisconnectCause.NOT_VALID);
+            return true;
         }
         return false;
     }
@@ -1923,6 +1982,27 @@ public class EmergencyCallDomainSelector extends DomainSelectorBase
         logi("isNonTtyOrTtySupported ret=" + ret);
 
         return ret;
+    }
+
+    private void checkAndSetTerminateAfterCsFailure(EmergencyRegistrationResult result) {
+        if (result == null) return;
+        String mcc = result.getMcc();
+        int accessNetwork = result.getAccessNetwork();
+        if (!TextUtils.isEmpty(mcc) && mcc.startsWith("00") // test network
+                && (accessNetwork == UTRAN || accessNetwork == GERAN)) {
+            // b/341055741
+            mTerminateAfterCsFailure = true;
+        }
+    }
+
+    @VisibleForTesting
+    public boolean isWiFiAvailable() {
+        return mWiFiAvailable;
+    }
+
+    @VisibleForTesting
+    public List<Network> getWiFiNetworksAvailable() {
+        return mWiFiNetworksAvailable;
     }
 
     @Override

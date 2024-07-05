@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-/* Changes from Qualcomm Innovation Center are provided under the following license:
- * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+/* Changes from Qualcomm Innovation Center, Inc. are provided under the following license:
+ * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted (subject to the limitations in the
@@ -146,6 +146,7 @@ import com.android.internal.telephony.PhoneFactory;
 import com.android.internal.telephony.euicc.EuiccConnector;
 import com.android.internal.telephony.util.TelephonyUtils;
 import com.android.phone.R;
+import com.android.phone.utils.Utils;
 
 import java.io.IOException;
 import java.net.HttpURLConnection;
@@ -174,6 +175,9 @@ public class RadioInfo extends AppCompatActivity {
     private static final String TAG = "RadioInfo";
 
     private static final boolean IS_USER_BUILD = "user".equals(Build.TYPE);
+
+    private static final String ACTION_ESOS_TEST =
+            "com.google.android.apps.stargate.ACTION_ESOS_QUESTIONNAIRE";
 
     private static final String[] PREFERRED_NETWORK_LABELS = {
             "GSM/WCDMA preferred",
@@ -353,6 +357,7 @@ public class RadioInfo extends AppCompatActivity {
     private Button mOemInfoButton;
     private Button mCarrierProvisioningButton;
     private Button mTriggerCarrierProvisioningButton;
+    private Button mEsosButton;
     private Switch mImsVolteProvisionedSwitch;
     private Switch mImsVtProvisionedSwitch;
     private Switch mImsWfcProvisionedSwitch;
@@ -607,6 +612,7 @@ public class RadioInfo extends AppCompatActivity {
     @Override
     public void onCreate(Bundle icicle) {
         super.onCreate(icicle);
+        Utils.setupEdgeToEdge(this);
         if (!android.os.Process.myUserHandle().isSystem()) {
             Log.e(TAG, "Not run from system user, don't do anything.");
             finish();
@@ -813,6 +819,17 @@ public class RadioInfo extends AppCompatActivity {
                     mTriggerCarrierProvisioningButtonHandler);
         } else {
             mTriggerCarrierProvisioningButton.setEnabled(false);
+        }
+
+        mEsosButton = (Button) findViewById(R.id.esos_questionnaire);
+        if (!TelephonyUtils.IS_DEBUGGABLE) {
+            mEsosButton.setVisibility(View.GONE);
+        } else {
+            mEsosButton.setOnClickListener(v ->
+                    mPhone.getContext().startActivity(
+                        new Intent(ACTION_ESOS_TEST)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK))
+            );
         }
 
         mOemInfoButton = (Button) findViewById(R.id.oem_info);
@@ -1590,15 +1607,18 @@ public class RadioInfo extends AppCompatActivity {
         mQueuedWork.execute(new Runnable() {
             @Override
             public void run() {
-                if (!mEuiccManager.isEnabled()) {
-                    mEuiccInfoResult = "Not enabled";
-                }
-                try {
-                    mEuiccInfoResult = " { Available memory in bytes:"
-                            + mEuiccManager.getAvailableMemoryInBytes()
-                            + " }";
-                } catch (Exception e) {
-                    mEuiccInfoResult = e.getMessage();
+                if (!getPackageManager().hasSystemFeature(PackageManager.FEATURE_TELEPHONY_EUICC)) {
+                    mEuiccInfoResult = "Euicc Feature is disabled";
+                } else if (mEuiccManager == null || !mEuiccManager.isEnabled()) {
+                    mEuiccInfoResult = "EuiccManager is not enabled";
+                } else {
+                    try {
+                        mEuiccInfoResult = " { Available memory in bytes:"
+                                + mEuiccManager.getAvailableMemoryInBytes()
+                                + " }";
+                    } catch (Exception e) {
+                        mEuiccInfoResult = e.getMessage();
+                    }
                 }
                 mHandler.post(setEuiccInfo);
             }

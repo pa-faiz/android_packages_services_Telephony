@@ -134,6 +134,8 @@
     <string name="updating_title" msgid="6130548922615719689">"Deien ezarpenak"</string>
     <string name="call_settings_admin_user_only" msgid="7238947387649986286">"Administratzaileak soilik alda ditzake deien ezarpenak."</string>
     <string name="phone_account_settings_user_restriction" msgid="9142685151087208396">"Administratzaileak / Laneko erabiltzaileek alda ditzakete telefonoko kontuaren ezarpenak."</string>
+    <!-- no translation found for phone_account_no_config_mobile_networks (7351062247756521227) -->
+    <skip />
     <string name="call_settings_with_label" msgid="8460230435361579511">"Ezarpenak (<xliff:g id="SUBSCRIPTIONLABEL">%s</xliff:g>)"</string>
     <string name="error_updating_title" msgid="2024290892676808965">"Deien ezarpenen errorea"</string>
     <string name="reading_settings" msgid="1605904432450871183">"Ezarpenak irakurtzen…"</string>
@@ -305,7 +307,7 @@
     <string name="keywords_carrier_settings_euicc" msgid="8540160967922063745">"operadorea, esim, esim txartela, sim, sim txartela, euicc, euicc txartela, aldatu operadoreak, aldatu operadorez, aldatu operadorea, gehitu operadorea, gehitu operadoreak"</string>
     <string name="carrier_settings_euicc_summary" msgid="2027941166597330117">"<xliff:g id="CARRIER_NAME">%1$s</xliff:g>: <xliff:g id="PHONE_NUMBER">%2$s</xliff:g>"</string>
     <string name="mobile_data_settings_title" msgid="7228249980933944101">"Datu-konexioa"</string>
-    <string name="mobile_data_settings_summary" msgid="5012570152029118471">"Atzitu datuak datu-konexioaren bidez"</string>
+    <string name="mobile_data_settings_summary" msgid="5012570152029118471">"Atzitu datuak sare mugikorraren bidez"</string>
     <string name="data_usage_disable_mobile" msgid="5669109209055988308">"Datu-konexioa desaktibatu nahi duzu?"</string>
     <string name="sim_selection_required_pref" msgid="6985901872978341314">"Hautatu egin behar da"</string>
     <string name="sim_change_data_title" msgid="9142726786345906606">"Datuetarako SIMa aldatu nahi duzu?"</string>
@@ -845,6 +847,7 @@
     <string name="radio_info_radio_power" msgid="8805595022160471587">"Sare mugikor bidezko irratiaren indarra"</string>
     <string name="simulate_out_of_service_string" msgid="7787925611727597193">"Simulatu gailua ez dabilela (arazketa-konpilazioa soilik)"</string>
     <string name="mock_carrier_roaming_satellite_string" msgid="4796300252858292593">"Simulatu operadorearen satelite modua (arazketa-konpilazioa soilik)"</string>
+    <string name="esos_satellite_string" msgid="7274794226125968657">"Probatu satelite bidezko SOS larrialdien modua (arazketa-konpilazioa soilik)"</string>
     <string name="radioInfo_menu_viewADN" msgid="4533179730908559846">"Ikusi SIMeko kontaktuak"</string>
     <string name="radioInfo_menu_viewFDN" msgid="1847236480527032061">"Ikusi markatze finkoko zenbakiak"</string>
     <string name="radioInfo_menu_viewSDN" msgid="2613431584522392842">"Ikusi zerbitzuaren markatze-zenbakiak"</string>

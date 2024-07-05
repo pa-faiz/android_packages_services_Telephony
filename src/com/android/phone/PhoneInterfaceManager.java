@@ -2731,6 +2731,10 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
 
         // For async handler to identify request type
         private static final int SUPPLY_PIN_COMPLETE = 100;
+        private static final int SUPPLY_PIN_DELAYED  = 101;
+        private static final int SUPPLY_PIN_DELAYED_TIMER_IN_MILLIS = 10000;
+        private static final UUID SUPPLY_PIN_UUID = UUID.fromString(
+                "d3768135-4323-491d-a6c8-bda01fc89040");
 
         UnlockSim(int phoneId, IccCard simCard) {
             mPhoneId = phoneId;
@@ -2769,7 +2773,15 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
                                         mResult = PhoneConstants.PIN_RESULT_SUCCESS;
                                     }
                                     mDone = true;
+                                    removeMessages(SUPPLY_PIN_DELAYED);
                                     UnlockSim.this.notifyAll();
+                                }
+                                break;
+                            case SUPPLY_PIN_DELAYED:
+                                if(!mDone) {
+                                    String logStr = "Delay in receiving SIM PIN response ";
+                                    if (DBG) log(logStr);
+                                    AnomalyReporter.reportAnomaly(SUPPLY_PIN_UUID, logStr);
                                 }
                                 break;
                         }
@@ -2810,6 +2822,8 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
             while (!mDone) {
                 try {
                     Log.d(LOG_TAG, "wait for done");
+                    mHandler.sendEmptyMessageDelayed(SUPPLY_PIN_DELAYED,
+                            SUPPLY_PIN_DELAYED_TIMER_IN_MILLIS);
                     wait();
                 } catch (InterruptedException e) {
                     // Restore the interrupted status
@@ -3946,6 +3960,15 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
      */
     private void enforceSatelliteCommunicationPermission(String message) {
         mApp.enforceCallingOrSelfPermission(permission.SATELLITE_COMMUNICATION, message);
+    }
+
+    /**
+     * Make sure the caller has PACKAGE_USAGE_STATS permission.
+     * @param message - log message to print.
+     * @throws SecurityException if the caller does not have the required permission
+     */
+    private void enforcePackageUsageStatsPermission(String message) {
+        mApp.enforceCallingOrSelfPermission(permission.PACKAGE_USAGE_STATS, message);
     }
 
     private String createTelUrl(String number) {
@@ -9445,7 +9468,11 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
                     + android.Manifest.permission.DUMP);
             return;
         }
-        DumpsysHandler.dump(mApp, fd, writer, args);
+        try {
+            DumpsysHandler.dump(mApp, fd, writer, args);
+        } catch (Exception e) {
+            writer.println("Failed to dump phone information: " + e);
+        }
     }
 
     @Override
@@ -13772,6 +13799,26 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
     }
 
     /**
+     * This API can be used by only CTS to override the boolean configs used by the
+     * DatagramController module.
+     *
+     * @param enable Whether to enable or disable boolean config.
+     * @return {@code true} if the boolean config is set successfully, {@code false} otherwise.
+     */
+    public boolean setDatagramControllerBooleanConfig(
+            boolean reset, int booleanType, boolean enable) {
+        Log.d(LOG_TAG, "setDatagramControllerBooleanConfig: booleanType=" + booleanType
+                + ", reset=" + reset + ", enable=" + enable);
+        TelephonyPermissions.enforceShellOnly(
+                Binder.getCallingUid(), "setDatagramControllerBooleanConfig");
+        TelephonyPermissions.enforceCallingOrSelfModifyPermissionOrCarrierPrivilege(mApp,
+                SubscriptionManager.INVALID_SUBSCRIPTION_ID,
+                "ssetDatagramControllerBooleanConfig");
+        return mSatelliteController.setDatagramControllerBooleanConfig(reset, booleanType, enable);
+    }
+
+
+    /**
      * This API can be used by only CTS to override the timeout durations used by the
      * SatelliteController module.
      *
@@ -13907,6 +13954,32 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
                 "setShouldSendDatagramToModemInDemoMode");
         return mSatelliteController.setShouldSendDatagramToModemInDemoMode(
                 shouldSendToModemInDemoMode);
+    }
+
+    /**
+     * This API can be used by only CTS to set the cache whether satellite communication is allowed.
+     *
+     * @param state a state indicates whether satellite access allowed state should be cached and
+     * the allowed state.
+     * @return {@code true} if the setting is successful, {@code false} otherwise.
+     */
+    public boolean setIsSatelliteCommunicationAllowedForCurrentLocationCache(String state) {
+        if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
+            Log.d(LOG_TAG, "setIsSatelliteCommunicationAllowedForCurrentLocationCache: "
+                    + "oemEnabledSatelliteFlag is disabled");
+            return false;
+        }
+
+        Log.d(LOG_TAG, "setIsSatelliteCommunicationAllowedForCurrentLocationCache: "
+                + "state=" + state);
+        TelephonyPermissions.enforceShellOnly(
+                Binder.getCallingUid(),
+                "setIsSatelliteCommunicationAllowedForCurrentLocationCache");
+        TelephonyPermissions.enforceCallingOrSelfModifyPermissionOrCarrierPrivilege(mApp,
+                SubscriptionManager.INVALID_SUBSCRIPTION_ID,
+                "setIsSatelliteCommunicationAllowedForCurrentLocationCache");
+        return mSatelliteAccessController.setIsSatelliteCommunicationAllowedForCurrentLocationCache(
+                state);
     }
 
     /**
@@ -14193,5 +14266,21 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
             int subId, @NonNull ISatelliteCommunicationAllowedStateCallback callback) {
         enforceSatelliteCommunicationPermission("unregisterForCommunicationAllowedStateChanged");
         mSatelliteAccessController.unregisterForCommunicationAllowedStateChanged(subId, callback);
+    }
+
+    /**
+     * Request to get the {@link SatelliteSessionStats} of the satellite service.
+     *
+     * @param subId The subId of the subscription to the satellite session stats for.
+     * @param result The result receiver that returns the {@link SatelliteSessionStats}
+     *               if the request is successful or an error code if the request failed.
+     *
+     * @throws SecurityException if the caller doesn't have required permission.
+     */
+    @Override
+    public void requestSatelliteSessionStats(int subId, @NonNull ResultReceiver result) {
+        enforceModifyPermission();
+        enforcePackageUsageStatsPermission("requestSatelliteSessionStats");
+        mSatelliteController.requestSatelliteSessionStats(subId, result);
     }
 }
