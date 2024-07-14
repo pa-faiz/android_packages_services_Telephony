@@ -14,12 +14,6 @@
  * limitations under the License.
  */
 
-/**
-* Changes from Qualcomm Innovation Center, Inc. are provided under the following license:
-* Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
-* SPDX-License-Identifier: BSD-3-Clause-Clear
-*/
-
 package com.android.phone;
 
 import static com.android.phone.TimeConsumingPreferenceActivity.RESPONSE_ERROR;
@@ -130,8 +124,6 @@ public class CallBarringEditPreference extends EditPinPreference {
                 R.styleable.CallBarringEditPreference, 0, R.style.EditPhoneNumberPreference);
         mFacility = typedArray.getString(R.styleable.CallBarringEditPreference_facility);
         typedArray.recycle();
-
-        mExtTelephonyManager = ExtTelephonyManager.getInstance(getContext());
     }
 
     /**
@@ -193,7 +185,6 @@ public class CallBarringEditPreference extends EditPinPreference {
             mQtiImsExtConnector = null;
             mQtiImsExtManager = null;
         }
-        mExtTelephonyManager.unregisterCallback(mExtPhoneCallbackListener);
     }
 
     void init(TimeConsumingPreferenceListener listener, boolean skipReading, Phone phone) {
@@ -201,6 +192,7 @@ public class CallBarringEditPreference extends EditPinPreference {
         mPhone = phone;
 
         mTcpListener = listener;
+        mExtTelephonyManager = ExtTelephonyManager.getInstance(getContext());
         if (!skipReading) {
             // Query call barring status
             if (!mPhone.isUtEnabled()) {
