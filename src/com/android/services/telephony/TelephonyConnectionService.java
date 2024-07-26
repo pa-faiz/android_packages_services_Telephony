@@ -2850,7 +2850,8 @@ public class TelephonyConnectionService extends ConnectionService {
 
     private boolean shouldExitSatelliteModeForEmergencyCall(boolean isEmergencyNumber,
             Phone phone) {
-        if (!mSatelliteController.isSatelliteEnabled()) {
+        if (!mSatelliteController.isSatelliteEnabled()
+                && !mSatelliteController.isSatelliteBeingEnabled()) {
             return false;
         }
 
