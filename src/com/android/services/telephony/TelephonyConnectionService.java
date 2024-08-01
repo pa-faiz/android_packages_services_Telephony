@@ -1544,8 +1544,10 @@ public class TelephonyConnectionService extends ConnectionService {
         }
 
         if (mDomainSelectionResolver.isDomainSelectionSupported()) {
-            // Normal routing emergency number shall be handled by normal call domain selctor.
-            int routing = getEmergencyCallRouting(phone, number, needToTurnOnRadio);
+            // Normal routing emergency number shall be handled by normal call domain selector.
+            int routing = (isEmergencyNumber)
+                    ? getEmergencyCallRouting(phone, number, needToTurnOnRadio)
+                    : EmergencyNumber.EMERGENCY_CALL_ROUTING_UNKNOWN;
             if (isEmergencyNumber && routing != EmergencyNumber.EMERGENCY_CALL_ROUTING_NORMAL) {
                 final Connection resultConnection =
                         placeEmergencyConnection(phone,
@@ -3412,6 +3414,12 @@ public class TelephonyConnectionService extends ConnectionService {
                     createEmergencyConnection(phone, (TelephonyConnection) resultConnection,
                             numberToDial, isTestEmergencyNumber, request, needToTurnOnRadio,
                             mEmergencyStateTracker.getEmergencyRegistrationResult());
+                } else if (result == android.telephony.DisconnectCause.EMERGENCY_PERM_FAILURE) {
+                    mEmergencyConnection.removeTelephonyConnectionListener(
+                            mEmergencyConnectionListener);
+                    TelephonyConnection c = mEmergencyConnection;
+                    releaseEmergencyCallDomainSelection(true, false);
+                    retryOutgoingOriginalConnection(c, phone, true);
                 } else {
                     mEmergencyConnection = null;
                     mAlternateEmergencyConnection = null;
@@ -3666,6 +3674,9 @@ public class TelephonyConnectionService extends ConnectionService {
     }
 
     private int getEmergencyCallRouting(Phone phone, String number, boolean needToTurnOnRadio) {
+        if (phone == null) {
+            return EmergencyNumber.EMERGENCY_CALL_ROUTING_UNKNOWN;
+        }
         // This method shall be called only if AOSP domain selection is enabled.
         if (mDynamicRoutingController == null) {
             mDynamicRoutingController = DynamicRoutingController.getInstance();
@@ -3974,6 +3985,12 @@ public class TelephonyConnectionService extends ConnectionService {
                     recreateEmergencyConnection(c, phone, domain);
                     mIsEmergencyCallPending = false;
                 }, mDomainSelectionMainExecutor);
+            } else if (result == android.telephony.DisconnectCause.EMERGENCY_PERM_FAILURE) {
+                mEmergencyConnection.removeTelephonyConnectionListener(
+                        mEmergencyConnectionListener);
+                TelephonyConnection ec = mEmergencyConnection;
+                releaseEmergencyCallDomainSelection(true, false);
+                retryOutgoingOriginalConnection(ec, phone, true);
             } else {
                 mEmergencyConnection = null;
                 mAlternateEmergencyConnection = null;
