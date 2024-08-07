@@ -1,3 +1,9 @@
+/**
+* Changes from Qualcomm Innovation Center, Inc. are provided under the following license:
+* Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+* SPDX-License-Identifier: BSD-3-Clause-Clear
+*/
+
 package com.android.phone;
 
 import android.app.ActionBar;
@@ -195,6 +201,7 @@ public class GsmUmtsCallForwardOptions extends TimeConsumingPreferenceActivity
         if (support) {
             mPreferences.add(preference);
         } else {
+            preference.deInit();
             prefSet.removePreference(preference);
         }
     }
