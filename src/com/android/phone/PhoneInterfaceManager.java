@@ -25,7 +25,6 @@ import static android.telephony.TelephonyManager.HAL_SERVICE_NETWORK;
 import static android.telephony.TelephonyManager.HAL_SERVICE_RADIO;
 import static android.telephony.satellite.SatelliteManager.KEY_SATELLITE_COMMUNICATION_ALLOWED;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_ACCESS_BARRED;
-import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_REQUEST_NOT_SUPPORTED;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_SUCCESS;
 
 import static com.android.internal.telephony.PhoneConstants.PHONE_TYPE_CDMA;
@@ -165,6 +164,7 @@ import android.telephony.satellite.ISatelliteSupportedStateCallback;
 import android.telephony.satellite.ISatelliteTransmissionUpdateCallback;
 import android.telephony.satellite.NtnSignalStrength;
 import android.telephony.satellite.NtnSignalStrengthCallback;
+import android.telephony.satellite.ProvisionSubscriberId;
 import android.telephony.satellite.SatelliteCapabilities;
 import android.telephony.satellite.SatelliteDatagram;
 import android.telephony.satellite.SatelliteDatagramCallback;
@@ -13166,7 +13166,7 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
     @Override
     public void requestIsEmergencyModeEnabled(int subId, @NonNull ResultReceiver result) {
         enforceSatelliteCommunicationPermission("requestIsEmergencyModeEnabled");
-        result.send(SATELLITE_RESULT_REQUEST_NOT_SUPPORTED, null);
+        mSatelliteController.requestIsEmergencyModeEnabled(subId, result);
     }
 
     /**
@@ -14282,5 +14282,50 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
         enforceModifyPermission();
         enforcePackageUsageStatsPermission("requestSatelliteSessionStats");
         mSatelliteController.requestSatelliteSessionStats(subId, result);
+    }
+
+    /**
+     * Request to get list of prioritized satellite subscriber ids to be used for provision.
+     *
+     * @param result The result receiver, which returns the list of prioritized satellite tokens
+     * to be used for provision if the request is successful or an error code if the request failed.
+     *
+     * @throws SecurityException if the caller doesn't have the required permission.
+     */
+    @Override
+    public void requestProvisionSubscriberIds(@NonNull ResultReceiver result) {
+        enforceSatelliteCommunicationPermission("requestProvisionSubscriberIds");
+        mSatelliteController.requestProvisionSubscriberIds(result);
+    }
+
+    /**
+     * Request to get provisioned status for given a satellite subscriber id.
+     *
+     * @param satelliteSubscriberId Satellite subscriber id requiring provisioned status check.
+     * @param result The result receiver, which returns the provisioned status of the token if the
+     * request is successful or an error code if the request failed.
+     *
+     * @throws SecurityException if the caller doesn't have the required permission.
+     */
+    @Override
+    public void requestIsProvisioned(@NonNull String satelliteSubscriberId,
+            @NonNull ResultReceiver result) {
+        enforceSatelliteCommunicationPermission("requestIsProvisioned");
+        mSatelliteController.requestIsProvisioned(satelliteSubscriberId, result);
+    }
+
+    /**
+     * Deliver the list of provisioned satellite subscriber ids.
+     *
+     * @param list List of provisioned satellite subscriber ids.
+     * @param result The result receiver that returns whether deliver success or fail.
+     *
+     * @throws SecurityException if the caller doesn't have the required permission.
+     */
+    @Override
+    public void provisionSatellite(@NonNull List<ProvisionSubscriberId> list,
+            @NonNull ResultReceiver result) {
+        enforceSatelliteCommunicationPermission("provisionSatellite");
+        mSatelliteController.provisionSatellite(list, result);
     }
 }
