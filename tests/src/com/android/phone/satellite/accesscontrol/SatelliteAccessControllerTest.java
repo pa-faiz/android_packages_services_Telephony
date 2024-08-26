@@ -131,7 +131,7 @@ public class SatelliteAccessControllerTest {
     private static final long TIMEOUT = 500;
     private static final List<String> EMPTY_STRING_LIST = new ArrayList<>();
     private static final List<String> LOCATION_PROVIDERS =
-            listOf(LocationManager.NETWORK_PROVIDER, LocationManager.GPS_PROVIDER);
+            listOf(LocationManager.NETWORK_PROVIDER, LocationManager.FUSED_PROVIDER);
     private static final int SUB_ID = 0;
 
     @Mock
@@ -193,6 +193,14 @@ public class SatelliteAccessControllerTest {
     private ArgumentCaptor<Integer> mCountryDetectorIntCaptor;
     @Captor
     private ArgumentCaptor<Object> mCountryDetectorObjCaptor;
+    @Captor
+    private ArgumentCaptor<BroadcastReceiver> mLocationBroadcastReceiverCaptor;
+    @Captor
+    private ArgumentCaptor<IntentFilter> mIntentFilterCaptor;
+    @Captor
+    private ArgumentCaptor<LocationRequest> mLocationRequestCaptor;
+    @Captor
+    private ArgumentCaptor<String> mLocationProviderStringCaptor;
 
     private boolean mQueriedSatelliteAllowed = false;
     private int mQueriedSatelliteAllowedResultCode = SATELLITE_RESULT_SUCCESS;
@@ -284,7 +292,7 @@ public class SatelliteAccessControllerTest {
         when(mMockLocationManager.getProviders(true)).thenReturn(LOCATION_PROVIDERS);
         when(mMockLocationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER))
                 .thenReturn(mMockLocation0);
-        when(mMockLocationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER))
+        when(mMockLocationManager.getLastKnownLocation(LocationManager.FUSED_PROVIDER))
                 .thenReturn(mMockLocation1);
         when(mMockLocation0.getLatitude()).thenReturn(0.0);
         when(mMockLocation0.getLongitude()).thenReturn(0.0);
@@ -690,7 +698,7 @@ public class SatelliteAccessControllerTest {
         mTestableLooper.processAllMessages();
         assertFalse(
                 mSatelliteAccessControllerUT.isKeepOnDeviceAccessControllerResourcesTimerStarted());
-        verify(mMockLocationManager).getCurrentLocation(eq(LocationManager.GPS_PROVIDER),
+        verify(mMockLocationManager).getCurrentLocation(eq(LocationManager.FUSED_PROVIDER),
                 any(LocationRequest.class), mLocationRequestCancellationSignalCaptor.capture(),
                 any(Executor.class), mLocationRequestConsumerCaptor.capture());
         assertTrue(mSatelliteAccessControllerUT.isWaitForCurrentLocationTimerStarted());
@@ -788,19 +796,20 @@ public class SatelliteAccessControllerTest {
                 ALLOWED_STATE_CACHE_VALID_DURATION_NANOS - 10;
 
         // cash is valid and never queried before
-        mSatelliteAccessControllerUT.mLastLocationQueryForPossibleChangeInAllowedRegionTimeNanos = 0;
+        mSatelliteAccessControllerUT.mLastLocationQueryForPossibleChangeInAllowedRegionTimeNanos =
+                0;
         assertTrue(mSatelliteAccessControllerUT.allowLocationQueryForSatelliteAllowedCheck());
 
         // cash is valid and throttled
         mSatelliteAccessControllerUT.mLastLocationQueryForPossibleChangeInAllowedRegionTimeNanos =
                 mSatelliteAccessControllerUT.elapsedRealtimeNanos
-                - TEST_LOCATION_QUERY_THROTTLE_INTERVAL_NANOS + 100;
+                        - TEST_LOCATION_QUERY_THROTTLE_INTERVAL_NANOS + 100;
         assertFalse(mSatelliteAccessControllerUT.allowLocationQueryForSatelliteAllowedCheck());
 
         // cash is valid and not throttled
         mSatelliteAccessControllerUT.mLastLocationQueryForPossibleChangeInAllowedRegionTimeNanos =
                 mSatelliteAccessControllerUT.elapsedRealtimeNanos
-                - TEST_LOCATION_QUERY_THROTTLE_INTERVAL_NANOS - 100;
+                        - TEST_LOCATION_QUERY_THROTTLE_INTERVAL_NANOS - 100;
         assertTrue(mSatelliteAccessControllerUT.allowLocationQueryForSatelliteAllowedCheck());
     }
 
@@ -964,6 +973,96 @@ public class SatelliteAccessControllerTest {
         verify(mMockCachedAccessRestrictionMap, times(1)).clear();
     }
 
+<<<<<<< HEAD
+=======
+    @Test
+    public void testLocationModeChanged() throws Exception {
+        // setup for querying GPS not to reset mIsSatelliteAllowedRegionPossiblyChanged false.
+        when(mMockFeatureFlags.oemEnabledSatelliteFlag()).thenReturn(true);
+        when(mMockContext.getResources()).thenReturn(mMockResources);
+        when(mMockResources.getBoolean(
+                com.android.internal.R.bool.config_oem_enabled_satellite_access_allow))
+                .thenReturn(TEST_SATELLITE_ALLOW);
+        setUpResponseForRequestIsSatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
+        setUpResponseForRequestIsSatelliteProvisioned(true, SATELLITE_RESULT_SUCCESS);
+        when(mMockSatelliteOnDeviceAccessController.isSatCommunicationAllowedAtLocation(
+                any(SatelliteOnDeviceAccessController.LocationToken.class))).thenReturn(true);
+        replaceInstance(SatelliteAccessController.class, "mCachedAccessRestrictionMap",
+                mSatelliteAccessControllerUT, mMockCachedAccessRestrictionMap);
+        doReturn(false).when(mMockCachedAccessRestrictionMap).containsKey(any());
+        mSatelliteAccessControllerUT.elapsedRealtimeNanos = TEST_LOCATION_FRESH_DURATION_NANOS + 1;
+
+        // Captor and Verify if the mockReceiver and mocContext is registered well
+        verify(mMockContext).registerReceiver(mLocationBroadcastReceiverCaptor.capture(),
+                mIntentFilterCaptor.capture());
+        assertSame(mSatelliteAccessControllerUT.getLocationBroadcastReceiver(),
+                mLocationBroadcastReceiverCaptor.getValue());
+        assertSame(MODE_CHANGED_ACTION, mIntentFilterCaptor.getValue().getAction(0));
+
+        // When the intent action is not MODE_CHANGED_ACTION,
+        // verify if the location manager never invoke isLocationEnabled()
+        doReturn("").when(mMockLocationIntent).getAction();
+        mSatelliteAccessControllerUT.setIsSatelliteAllowedRegionPossiblyChanged(false);
+        mSatelliteAccessControllerUT.getLocationBroadcastReceiver()
+                .onReceive(mMockContext, mMockLocationIntent);
+        verify(mMockLocationManager, never()).isLocationEnabled();
+
+        // When the intent action is MODE_CHANGED_ACTION and isLocationEnabled() is true,
+        // verify if mIsSatelliteAllowedRegionPossiblyChanged is true
+        doReturn(MODE_CHANGED_ACTION).when(mMockLocationIntent).getAction();
+        doReturn(true).when(mMockLocationManager).isLocationEnabled();
+        clearInvocations(mMockLocationManager);
+        mSatelliteAccessControllerUT.setIsSatelliteAllowedRegionPossiblyChanged(false);
+        mSatelliteAccessControllerUT.getLocationBroadcastReceiver()
+                .onReceive(mMockContext, mMockLocationIntent);
+        verify(mMockLocationManager, times(1)).isLocationEnabled();
+        mTestableLooper.processAllMessages();
+        assertEquals(true, mSatelliteAccessControllerUT.isSatelliteAllowedRegionPossiblyChanged());
+
+        // When the intent action is MODE_CHANGED_ACTION and isLocationEnabled() is false,
+        // verify if mIsSatelliteAllowedRegionPossiblyChanged is false
+        doReturn(false).when(mMockLocationManager).isLocationEnabled();
+        clearInvocations(mMockLocationManager);
+        mSatelliteAccessControllerUT.setIsSatelliteAllowedRegionPossiblyChanged(false);
+        mSatelliteAccessControllerUT.getLocationBroadcastReceiver()
+                .onReceive(mMockContext, mMockLocationIntent);
+        verify(mMockLocationManager, times(1)).isLocationEnabled();
+        mTestableLooper.processAllMessages();
+        assertEquals(false, mSatelliteAccessControllerUT.isSatelliteAllowedRegionPossiblyChanged());
+    }
+
+    @Test
+    public void testCheckSatelliteAccessRestrictionUsingGPS() {
+        // In emergency case,
+        // verify if the location manager get FUSED provider and ignore location settings
+        doReturn(true).when(mMockTelecomManager).isInEmergencyCall();
+        mSatelliteAccessControllerUT.setLocationRequestCancellationSignalAsNull();
+        mSatelliteAccessControllerUT.queryCurrentLocation();
+
+        verify(mMockLocationManager, times(1))
+                .getCurrentLocation(mLocationProviderStringCaptor.capture(),
+                        mLocationRequestCaptor.capture(), any(), any(), any());
+        assertEquals(LocationManager.FUSED_PROVIDER, mLocationProviderStringCaptor.getValue());
+        assertTrue(mLocationRequestCaptor.getValue().isLocationSettingsIgnored());
+
+        // In non-emergency case,
+        // verify if the location manager get FUSED provider and not ignore location settings
+        clearInvocations(mMockLocationManager);
+        doReturn(false).when(mMockTelecomManager).isInEmergencyCall();
+        doReturn(false).when(mMockPhone).isInEcm();
+        doReturn(false).when(mMockPhone2).isInEcm();
+        doReturn(false).when(mMockSatelliteController).isInEmergencyMode();
+        mSatelliteAccessControllerUT.setLocationRequestCancellationSignalAsNull();
+        mSatelliteAccessControllerUT.queryCurrentLocation();
+
+        verify(mMockLocationManager, times(1))
+                .getCurrentLocation(mLocationProviderStringCaptor.capture(),
+                        mLocationRequestCaptor.capture(), any(), any(), any());
+        assertEquals(LocationManager.FUSED_PROVIDER, mLocationProviderStringCaptor.getValue());
+        assertFalse(mLocationRequestCaptor.getValue().isLocationSettingsIgnored());
+    }
+
+>>>>>>> f13f3c7fc (Replace GPS provider with FUSED provider to have both GPS & network location)
     private void sendSatelliteCommunicationAllowedEvent() {
         Pair<Integer, ResultReceiver> requestPair =
                 new Pair<>(SubscriptionManager.DEFAULT_SUBSCRIPTION_ID,
@@ -1143,5 +1242,18 @@ public class SatelliteAccessControllerTest {
         public ResultReceiver getResultReceiverCurrentLocation() {
             return mHandlerForSatelliteAllowedResult;
         }
+<<<<<<< HEAD
+=======
+
+        public BroadcastReceiver getLocationBroadcastReceiver() {
+            return mLocationModeChangedBroadcastReceiver;
+        }
+
+        public void setLocationRequestCancellationSignalAsNull() {
+            synchronized (mLock) {
+                mLocationRequestCancellationSignal = null;
+            }
+        }
+>>>>>>> f13f3c7fc (Replace GPS provider with FUSED provider to have both GPS & network location)
     }
 }
