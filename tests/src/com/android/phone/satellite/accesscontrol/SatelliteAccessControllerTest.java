@@ -16,6 +16,7 @@
 
 package com.android.phone.satellite.accesscontrol;
 
+import static android.location.LocationManager.MODE_CHANGED_ACTION;
 import static android.telephony.satellite.SatelliteManager.KEY_SATELLITE_COMMUNICATION_ALLOWED;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_LOCATION_NOT_AVAILABLE;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_MODEM_ERROR;
@@ -23,7 +24,7 @@ import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_REQU
 import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_SUCCESS;
 
 import static com.android.phone.satellite.accesscontrol.SatelliteAccessController.ALLOWED_STATE_CACHE_VALID_DURATION_NANOS;
-import static com.android.phone.satellite.accesscontrol.SatelliteAccessController.CMD_HANDLE_COUNTRY_CODE_CHANGED;
+import static com.android.phone.satellite.accesscontrol.SatelliteAccessController.EVENT_COUNTRY_CODE_CHANGED;
 import static com.android.phone.satellite.accesscontrol.SatelliteAccessController.CMD_IS_SATELLITE_COMMUNICATION_ALLOWED;
 import static com.android.phone.satellite.accesscontrol.SatelliteAccessController.DEFAULT_DELAY_MINUTES_BEFORE_VALIDATING_POSSIBLE_CHANGE_IN_ALLOWED_REGION;
 import static com.android.phone.satellite.accesscontrol.SatelliteAccessController.DEFAULT_THROTTLE_INTERVAL_FOR_LOCATION_QUERY_MINUTES;
@@ -55,7 +56,10 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import android.annotation.Nullable;
+import android.content.BroadcastReceiver;
 import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.res.Resources;
 import android.location.Location;
@@ -171,6 +175,8 @@ public class SatelliteAccessControllerTest {
     @Mock
     private Map<SatelliteOnDeviceAccessController.LocationToken, Boolean>
             mMockCachedAccessRestrictionMap;
+    @Mock
+    private Intent mMockLocationIntent;
 
     private Looper mLooper;
     private TestableLooper mTestableLooper;
@@ -317,6 +323,7 @@ public class SatelliteAccessControllerTest {
 
         when(mMockFeatureFlags.satellitePersistentLogging()).thenReturn(true);
         when(mMockFeatureFlags.geofenceEnhancementForBetterUx()).thenReturn(true);
+        when(mMockFeatureFlags.oemEnabledSatelliteFlag()).thenReturn(true);
 
         mSatelliteAccessControllerUT = new TestSatelliteAccessController(mMockContext,
                 mMockFeatureFlags, mLooper, mMockLocationManager, mMockTelecomManager,
@@ -823,7 +830,7 @@ public class SatelliteAccessControllerTest {
                 mCountryDetectorObjCaptor.capture());
 
         assertSame(mCountryDetectorHandlerCaptor.getValue(), mSatelliteAccessControllerUT);
-        assertSame(mCountryDetectorIntCaptor.getValue(), CMD_HANDLE_COUNTRY_CODE_CHANGED);
+        assertSame(mCountryDetectorIntCaptor.getValue(), EVENT_COUNTRY_CODE_CHANGED);
         assertNull(mCountryDetectorObjCaptor.getValue());
 
         // Normal case that invokes
@@ -876,7 +883,7 @@ public class SatelliteAccessControllerTest {
                 mCountryDetectorObjCaptor.capture());
 
         assertSame(mCountryDetectorHandlerCaptor.getValue(), mSatelliteAccessControllerUT);
-        assertSame(mCountryDetectorIntCaptor.getValue(), CMD_HANDLE_COUNTRY_CODE_CHANGED);
+        assertSame(mCountryDetectorIntCaptor.getValue(), EVENT_COUNTRY_CODE_CHANGED);
         assertNull(mCountryDetectorObjCaptor.getValue());
 
         assertTrue(mSatelliteAccessControllerUT
@@ -973,8 +980,6 @@ public class SatelliteAccessControllerTest {
         verify(mMockCachedAccessRestrictionMap, times(1)).clear();
     }
 
-<<<<<<< HEAD
-=======
     @Test
     public void testLocationModeChanged() throws Exception {
         // setup for querying GPS not to reset mIsSatelliteAllowedRegionPossiblyChanged false.
@@ -994,7 +999,7 @@ public class SatelliteAccessControllerTest {
 
         // Captor and Verify if the mockReceiver and mocContext is registered well
         verify(mMockContext).registerReceiver(mLocationBroadcastReceiverCaptor.capture(),
-                mIntentFilterCaptor.capture());
+                 mIntentFilterCaptor.capture());
         assertSame(mSatelliteAccessControllerUT.getLocationBroadcastReceiver(),
                 mLocationBroadcastReceiverCaptor.getValue());
         assertSame(MODE_CHANGED_ACTION, mIntentFilterCaptor.getValue().getAction(0));
@@ -1062,7 +1067,6 @@ public class SatelliteAccessControllerTest {
         assertFalse(mLocationRequestCaptor.getValue().isLocationSettingsIgnored());
     }
 
->>>>>>> f13f3c7fc (Replace GPS provider with FUSED provider to have both GPS & network location)
     private void sendSatelliteCommunicationAllowedEvent() {
         Pair<Integer, ResultReceiver> requestPair =
                 new Pair<>(SubscriptionManager.DEFAULT_SUBSCRIPTION_ID,
@@ -1083,7 +1087,7 @@ public class SatelliteAccessControllerTest {
     }
 
     private void sendCommandValidateCountryCodeChangeEvent(Context context) {
-        Message msg = mSatelliteAccessControllerUT.obtainMessage(CMD_HANDLE_COUNTRY_CODE_CHANGED);
+        Message msg = mSatelliteAccessControllerUT.obtainMessage(EVENT_COUNTRY_CODE_CHANGED);
         msg.obj = new AsyncResult(context, SATELLITE_RESULT_SUCCESS, null);
         msg.sendToTarget();
         mTestableLooper.processAllMessages();
@@ -1242,8 +1246,6 @@ public class SatelliteAccessControllerTest {
         public ResultReceiver getResultReceiverCurrentLocation() {
             return mHandlerForSatelliteAllowedResult;
         }
-<<<<<<< HEAD
-=======
 
         public BroadcastReceiver getLocationBroadcastReceiver() {
             return mLocationModeChangedBroadcastReceiver;
@@ -1254,6 +1256,5 @@ public class SatelliteAccessControllerTest {
                 mLocationRequestCancellationSignal = null;
             }
         }
->>>>>>> f13f3c7fc (Replace GPS provider with FUSED provider to have both GPS & network location)
     }
 }
