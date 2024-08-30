@@ -23,13 +23,13 @@ import android.os.Bundle;
 import android.os.OutcomeReceiver;
 import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
-import android.telephony.satellite.wrapper.CarrierRoamingNtnModeListenerWrapper;
+import android.telephony.satellite.wrapper.CarrierRoamingNtnModeListenerWrapper2;
 import android.telephony.satellite.wrapper.NtnSignalStrengthCallbackWrapper;
 import android.telephony.satellite.wrapper.NtnSignalStrengthWrapper;
 import android.telephony.satellite.wrapper.SatelliteCapabilitiesCallbackWrapper;
 import android.telephony.satellite.wrapper.SatelliteCommunicationAllowedStateCallbackWrapper;
 import android.telephony.satellite.wrapper.SatelliteManagerWrapper;
-import android.telephony.satellite.wrapper.SatelliteModemStateCallbackWrapper;
+import android.telephony.satellite.wrapper.SatelliteModemStateCallbackWrapper2;
 import android.util.Log;
 import android.view.View;
 import android.view.View.OnClickListener;
@@ -397,7 +397,7 @@ public class TestSatelliteWrapper extends Activity {
         }
     }
 
-    private class CarrierRoamingNtnModeListener implements CarrierRoamingNtnModeListenerWrapper {
+    private class CarrierRoamingNtnModeListener implements CarrierRoamingNtnModeListenerWrapper2 {
 
         @Override
         public void onCarrierRoamingNtnModeChanged(boolean active) {
@@ -427,7 +427,7 @@ public class TestSatelliteWrapper extends Activity {
         }
     }
 
-    private class SatelliteModemStateCallback implements SatelliteModemStateCallbackWrapper {
+    private class SatelliteModemStateCallback implements SatelliteModemStateCallbackWrapper2 {
         @Override
         public void onSatelliteModemStateChanged(int state) {
             String message = "Received onSatelliteModemStateChanged state: " + state;
