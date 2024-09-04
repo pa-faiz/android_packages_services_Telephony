@@ -3267,7 +3267,6 @@ public class TelephonyShellCommand extends BasicShellCommandHandler {
     private int handleSetSatelliteServicePackageNameCommand() {
         PrintWriter errPw = getErrPrintWriter();
         String serviceName = null;
-        String provisioned = null;
 
         String opt;
         while ((opt = getNextOption()) != null) {
@@ -3276,31 +3275,24 @@ public class TelephonyShellCommand extends BasicShellCommandHandler {
                     serviceName = getNextArgRequired();
                     break;
                 }
-
-                case "-p": {
-                    provisioned = getNextArgRequired();
-                    break;
-                }
             }
         }
         Log.d(LOG_TAG, "handleSetSatelliteServicePackageNameCommand: serviceName="
-                + serviceName + ", provisioned=" + provisioned);
+                + serviceName);
 
         try {
-            boolean result = mInterface.setSatelliteServicePackageName(serviceName, provisioned);
+            boolean result = mInterface.setSatelliteServicePackageName(serviceName);
             if (VDBG) {
-                Log.v(LOG_TAG,
-                        "SetSatelliteServicePackageName " + serviceName + ", provisioned="
-                                + provisioned + ", result = " + result);
+                Log.v(LOG_TAG, "SetSatelliteServicePackageName " + serviceName
+                        + ", result = " + result);
             }
             getOutPrintWriter().println(result);
         } catch (RemoteException e) {
-            Log.w(LOG_TAG, "SetSatelliteServicePackageName: " + serviceName + ", provisioned="
-                    + provisioned + ", error = " + e.getMessage());
+            Log.w(LOG_TAG, "SetSatelliteServicePackageName: " + serviceName
+                    + ", error = " + e.getMessage());
             errPw.println("Exception: " + e.getMessage());
             return -1;
         }
-
         return 0;
     }
 
