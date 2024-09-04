@@ -1525,8 +1525,7 @@ public class TelephonyConnectionService extends ConnectionService {
                 handle == null ? null : handle.getSchemeSpecificPart());
         ImsPhone imsPhone = phone != null ? (ImsPhone) phone.getImsPhone() : null;
 
-        boolean needToTurnOffSatellite = shouldExitSatelliteModeForEmergencyCall(
-                isEmergencyNumber, phone);
+        boolean needToTurnOffSatellite = shouldExitSatelliteModeForEmergencyCall(isEmergencyNumber);
 
         boolean isPhoneWifiCallingEnabled = phone != null && phone.isWifiCallingEnabled();
         boolean needToTurnOnRadio = (isEmergencyNumber && (!isRadioOn() || isAirplaneModeOn))
@@ -1550,17 +1549,20 @@ public class TelephonyConnectionService extends ConnectionService {
             }
         }
 
+        boolean forNormalRoutingEmergencyCall = false;
         if (mDomainSelectionResolver.isDomainSelectionSupported()) {
-            // Normal routing emergency number shall be handled by normal call domain selector.
-            int routing = (isEmergencyNumber)
-                    ? getEmergencyCallRouting(phone, number, needToTurnOnRadio)
-                    : EmergencyNumber.EMERGENCY_CALL_ROUTING_UNKNOWN;
-            if (isEmergencyNumber && routing != EmergencyNumber.EMERGENCY_CALL_ROUTING_NORMAL) {
-                final Connection resultConnection =
-                        placeEmergencyConnection(phone,
-                                request, numberToDial, isTestEmergencyNumber,
-                                handle, needToTurnOnRadio, routing);
-                if (resultConnection != null) return resultConnection;
+            if (isEmergencyNumber) {
+                // Normal routing emergency number shall be handled by normal call domain selector.
+                int routing = getEmergencyCallRouting(phone, number, needToTurnOnRadio);
+                if (routing != EmergencyNumber.EMERGENCY_CALL_ROUTING_NORMAL) {
+                    final Connection resultConnection =
+                            placeEmergencyConnection(phone,
+                                    request, numberToDial, isTestEmergencyNumber,
+                                    handle, needToTurnOnRadio, routing);
+                    if (resultConnection != null) return resultConnection;
+                }
+                forNormalRoutingEmergencyCall = true;
+                Log.d(this, "onCreateOutgoingConnection, forNormalRoutingEmergencyCall");
             }
         }
 
@@ -1648,7 +1650,7 @@ public class TelephonyConnectionService extends ConnectionService {
                     }
                 }
             }, isEmergencyNumber && !isTestEmergencyNumber, phone, isTestEmergencyNumber,
-                    timeoutToOnTimeoutCallback);
+                    timeoutToOnTimeoutCallback, forNormalRoutingEmergencyCall);
             // Return the still unconnected GsmConnection and wait for the Radios to boot before
             // connecting it to the underlying Phone.
             return resultConnection;
@@ -1888,7 +1890,7 @@ public class TelephonyConnectionService extends ConnectionService {
                 });
             }
         } else {
-            if (shouldExitSatelliteModeForEmergencyCall(isEmergencyNumber, phone)) {
+            if (shouldExitSatelliteModeForEmergencyCall(isEmergencyNumber)) {
                 Log.w(LOG_TAG, "handleOnComplete, failed to turn off satellite modem");
                 closeOrDestroyConnection(originalConnection,
                         mDisconnectCauseFactory.toTelecomDisconnectCause(
@@ -2848,9 +2850,9 @@ public class TelephonyConnectionService extends ConnectionService {
         return result;
     }
 
-    private boolean shouldExitSatelliteModeForEmergencyCall(boolean isEmergencyNumber,
-            Phone phone) {
-        if (!mSatelliteController.isSatelliteEnabled()) {
+    private boolean shouldExitSatelliteModeForEmergencyCall(boolean isEmergencyNumber) {
+        if (!mSatelliteController.isSatelliteEnabled()
+                && !mSatelliteController.isSatelliteBeingEnabled()) {
             return false;
         }
 
@@ -2859,13 +2861,34 @@ public class TelephonyConnectionService extends ConnectionService {
                 // If user makes emergency call in demo mode, end the satellite session
                 return true;
             } else if (mFeatureFlags.carrierRoamingNbIotNtn()
-                    && mSatelliteController.isInSatelliteModeForCarrierRoaming(phone)
                     && !mSatelliteController.getRequestIsEmergency()) {
-                // If CarrierRoaming mode enabled and OEM Satellite request is not for emergency
-                // end to satellite session
+                // If satellite is not for emergency, end the satellite session
                 return true;
-            } else {
-                return getTurnOffOemEnabledSatelliteDuringEmergencyCall();
+            } else { // satellite is for emergency
+                if (mFeatureFlags.carrierRoamingNbIotNtn()) {
+                    Phone satellitePhone = mSatelliteController.getSatellitePhone();
+                    if (satellitePhone == null) {
+                        loge("satellite is/being enabled, but satellitePhone is null");
+                        return false;
+                    }
+                    SubscriptionInfoInternal info = SubscriptionManagerService.getInstance()
+                            .getSubscriptionInfoInternal(satellitePhone.getSubId());
+                    if (info == null) {
+                        loge("satellite is/being enabled, but satellite sub "
+                                + satellitePhone.getSubId() + " is null");
+                        return false;
+                    }
+
+                    if (info.getOnlyNonTerrestrialNetwork() == 1) {
+                        // OEM
+                        return getTurnOffOemEnabledSatelliteDuringEmergencyCall();
+                    } else {
+                        // Carrier
+                        return mSatelliteController.shouldTurnOffCarrierSatelliteForEmergencyCall();
+                    }
+                } else {
+                    return getTurnOffOemEnabledSatelliteDuringEmergencyCall();
+                }
             }
         }
 
@@ -6086,5 +6109,9 @@ public class TelephonyConnectionService extends ConnectionService {
     @VisibleForTesting
     public void setFeatureFlags(FeatureFlags featureFlags) {
         mFeatureFlags = featureFlags;
+    }
+
+    private void loge(String s) {
+        Log.d(this, s);
     }
 }
