@@ -282,6 +282,10 @@ public class SatelliteAccessController extends Handler {
         }
     };
 
+    private final Object mIsAllowedCheckBeforeEnablingSatelliteLock = new Object();
+    @GuardedBy("mIsAllowedCheckBeforeEnablingSatelliteLock")
+    private boolean mIsAllowedCheckBeforeEnablingSatellite;
+
     /**
      * Create a SatelliteAccessController instance.
      *
@@ -357,7 +361,7 @@ public class SatelliteAccessController extends Handler {
                                 protected void onReceiveResult(int resultCode, Bundle resultData) {
                                     // do nothing
                                 }
-                            });
+                            }, false);
                 }
             }
         };
@@ -375,7 +379,7 @@ public class SatelliteAccessController extends Handler {
                                 protected void onReceiveResult(int resultCode, Bundle resultData) {
                                     // do nothing
                                 }
-                            });
+                            }, false);
                 }
             }
 
@@ -457,12 +461,18 @@ public class SatelliteAccessController extends Handler {
      *               if the request failed.
      */
     public void requestIsCommunicationAllowedForCurrentLocation(
-            @NonNull ResultReceiver result) {
+            @NonNull ResultReceiver result, boolean enablingSatellite) {
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
             plogd("oemEnabledSatelliteFlag is disabled");
             result.send(SATELLITE_RESULT_REQUEST_NOT_SUPPORTED, null);
             return;
         }
+        plogd("requestIsCommunicationAllowedForCurrentLocation : "
+                + "enablingSatellite is " + enablingSatellite);
+        synchronized (mIsAllowedCheckBeforeEnablingSatelliteLock) {
+            mIsAllowedCheckBeforeEnablingSatellite = enablingSatellite;
+        }
+        mAccessControllerMetricsStats.setTriggeringEvent(TRIGGERING_EVENT_EXTERNAL_REQUEST);
         sendRequestAsync(CMD_IS_SATELLITE_COMMUNICATION_ALLOWED,
                 new Pair<>(mSatelliteController.getSatellitePhone().getSubId(), result));
     }
@@ -1048,6 +1058,9 @@ public class SatelliteAccessController extends Handler {
         if (!shouldRetryValidatingPossibleChangeInAllowedRegion(resultCode)) {
             setIsSatelliteAllowedRegionPossiblyChanged(false);
         }
+        synchronized (mIsAllowedCheckBeforeEnablingSatelliteLock) {
+            mIsAllowedCheckBeforeEnablingSatellite = false;
+        }
         reportMetrics(resultCode, allowed);
     }
 
@@ -1124,7 +1137,14 @@ public class SatelliteAccessController extends Handler {
             logd("handleSatelliteAllowedRegionPossiblyChanged");
             setIsSatelliteAllowedRegionPossiblyChanged(true);
             requestIsCommunicationAllowedForCurrentLocation(
-                    mHandlerForSatelliteAllowedResult);
+                    mHandlerForSatelliteAllowedResult, false);
+            int triggeringEvent = TRIGGERING_EVENT_UNKNOWN;
+            if (handleEvent == EVENT_LOCATION_SETTINGS_ENABLED) {
+                triggeringEvent = TRIGGERING_EVENT_LOCATION_SETTINGS_ENABLED;
+            } else if (handleEvent == EVENT_COUNTRY_CODE_CHANGED) {
+                triggeringEvent = TRIGGERING_EVENT_MCC_CHANGED;
+            }
+            mAccessControllerMetricsStats.setTriggeringEvent(triggeringEvent);
         }
     }
 
@@ -1168,28 +1188,32 @@ public class SatelliteAccessController extends Handler {
     /**
      * Telephony-internal logic to verify if satellite access is restricted from the location query.
      */
-    private void checkSatelliteAccessRestrictionUsingGPS() {
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
+    public void checkSatelliteAccessRestrictionUsingGPS() {
         logv("checkSatelliteAccessRestrictionUsingGPS:");
-        if (isInEmergency()) {
-            executeLocationQuery();
-        } else {
-            if (mLocationManager.isLocationEnabled()) {
-                plogd("location query is allowed");
-                if (allowLocationQueryForSatelliteAllowedCheck()) {
-                    executeLocationQuery();
-                } else {
-                    Bundle bundle = new Bundle();
-                    bundle.putBoolean(KEY_SATELLITE_COMMUNICATION_ALLOWED,
-                            mLatestSatelliteCommunicationAllowed);
-                    sendSatelliteAllowResultToReceivers(SATELLITE_RESULT_SUCCESS, bundle,
-                            mLatestSatelliteCommunicationAllowed);
-                }
+        synchronized (mIsAllowedCheckBeforeEnablingSatelliteLock) {
+            if (isInEmergency()) {
+                executeLocationQuery();
             } else {
-                plogv("location query is not allowed");
-                Bundle bundle = new Bundle();
-                bundle.putBoolean(KEY_SATELLITE_COMMUNICATION_ALLOWED, false);
-                sendSatelliteAllowResultToReceivers(
-                        SATELLITE_RESULT_LOCATION_DISABLED, bundle, false);
+                if (mLocationManager.isLocationEnabled()) {
+                    plogd("location query is allowed");
+                    if (allowLocationQueryForSatelliteAllowedCheck()
+                            || mIsAllowedCheckBeforeEnablingSatellite) {
+                        executeLocationQuery();
+                    } else {
+                        Bundle bundle = new Bundle();
+                        bundle.putBoolean(KEY_SATELLITE_COMMUNICATION_ALLOWED,
+                                mLatestSatelliteCommunicationAllowed);
+                        sendSatelliteAllowResultToReceivers(SATELLITE_RESULT_SUCCESS, bundle,
+                                mLatestSatelliteCommunicationAllowed);
+                    }
+                } else {
+                    plogv("location query is not allowed");
+                    Bundle bundle = new Bundle();
+                    bundle.putBoolean(KEY_SATELLITE_COMMUNICATION_ALLOWED, false);
+                    sendSatelliteAllowResultToReceivers(
+                            SATELLITE_RESULT_LOCATION_DISABLED, bundle, false);
+                }
             }
         }
     }
@@ -1285,8 +1309,7 @@ public class SatelliteAccessController extends Handler {
         }
     }
 
-    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
-    protected void queryCurrentLocation() {
+    private void queryCurrentLocation() {
         synchronized (mLock) {
             if (mLocationRequestCancellationSignal != null) {
                 plogd("queryCurrentLocation : "
