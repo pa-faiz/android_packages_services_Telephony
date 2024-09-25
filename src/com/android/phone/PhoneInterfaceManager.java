@@ -442,6 +442,9 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
     private PackageManager mPackageManager;
     private final int mVendorApiLevel;
 
+    @Nullable
+    private ComponentName mTestEuiccUiComponent;
+
     /** User Activity */
     private final AtomicBoolean mNotifyUserActivity;
     private static final int USER_ACTIVITY_NOTIFICATION_DELAY = 200;
