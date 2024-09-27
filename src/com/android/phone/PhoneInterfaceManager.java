@@ -14359,4 +14359,44 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
             Binder.restoreCallingIdentity(identity);
         }
     }
+
+    /**
+     * This API can be used by only CTS to override the Euicc UI component.
+     *
+     * @param componentName ui component to be launched for testing. {@code null} to reset.
+     *
+     * @hide
+     */
+    @Override
+    public void setTestEuiccUiComponent(@Nullable ComponentName componentName) {
+        enforceModifyPermission();
+        log("setTestEuiccUiComponent: " + componentName);
+        mTestEuiccUiComponent = componentName;
+    }
+
+    /**
+     * This API can be used by only CTS to retrieve the Euicc UI component.
+     *
+     * @return Euicc UI component. {@code null} if not available.
+     * @hide
+     */
+    @Override
+    @Nullable
+    public ComponentName getTestEuiccUiComponent() {
+        enforceReadPrivilegedPermission("getTestEuiccUiComponent");
+        return mTestEuiccUiComponent;
+    }
+
+    /**
+     * This API can be used only for test purpose to override the carrier roaming Ntn eligibility
+     *
+     * @param state        to update Ntn Eligibility.
+     * @param resetRequired to reset the overridden flag in satellite controller.
+     * @return {@code true} if the shell command is successful, {@code false} otherwise.
+     */
+    public boolean overrideCarrierRoamingNtnEligibilityChanged(boolean state,
+            boolean resetRequired) {
+        return mSatelliteAccessController.overrideCarrierRoamingNtnEligibilityChanged(state,
+                resetRequired);
+    }
 }
