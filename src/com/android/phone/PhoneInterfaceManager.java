@@ -442,6 +442,9 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
     private PackageManager mPackageManager;
     private final int mVendorApiLevel;
 
+    @Nullable
+    private ComponentName mTestEuiccUiComponent;
+
     /** User Activity */
     private final AtomicBoolean mNotifyUserActivity;
     private static final int USER_ACTIVITY_NOTIFICATION_DELAY = 200;
@@ -13113,7 +13116,7 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
                 }
             };
             mSatelliteAccessController.requestIsCommunicationAllowedForCurrentLocation(
-                    resultReceiver);
+                    resultReceiver, true);
         } else {
             // No need to check if satellite is allowed at current location when disabling satellite
             mSatelliteController.requestSatelliteEnabled(
@@ -13431,7 +13434,7 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
     public void requestIsCommunicationAllowedForCurrentLocation(int subId,
             @NonNull ResultReceiver result) {
         enforceSatelliteCommunicationPermission("requestIsCommunicationAllowedForCurrentLocation");
-        mSatelliteAccessController.requestIsCommunicationAllowedForCurrentLocation(result);
+        mSatelliteAccessController.requestIsCommunicationAllowedForCurrentLocation(result, false);
     }
 
     /**
@@ -13748,6 +13751,22 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
                 SubscriptionManager.INVALID_SUBSCRIPTION_ID,
                 "setSatelliteListeningTimeoutDuration");
         return mSatelliteController.setSatelliteListeningTimeoutDuration(timeoutMillis);
+    }
+
+    /**
+     * This API can be used by only CTS to control ingoring cellular service state event.
+     *
+     * @param enabled Whether to enable boolean config.
+     * @return {@code true} if the value is set successfully, {@code false} otherwise.
+     */
+    public boolean setSatelliteIgnoreCellularServiceState(boolean enabled) {
+        Log.d(LOG_TAG, "setSatelliteIgnoreServiceState - " + enabled);
+        TelephonyPermissions.enforceShellOnly(
+                Binder.getCallingUid(), "setSatelliteIgnoreServiceState");
+        TelephonyPermissions.enforceCallingOrSelfModifyPermissionOrCarrierPrivilege(mApp,
+                SubscriptionManager.INVALID_SUBSCRIPTION_ID,
+                "setSatelliteIgnoreServiceState");
+        return mSatelliteController.setSatelliteIgnoreCellularServiceState(enabled);
     }
 
     /**
@@ -14309,5 +14328,78 @@ public class PhoneInterfaceManager extends ITelephony.Stub {
         } finally {
             Binder.restoreCallingIdentity(identity);
         }
+    }
+
+    /**
+     * This API can be used by only CTS to override the cached value for the device overlay config
+     * value :
+     * config_satellite_gateway_service_package and
+     * config_satellite_carrier_roaming_esos_provisioned_class.
+     * These values are set before sending an intent to broadcast there are any change to list of
+     * subscriber informations.
+     *
+     * @param name the name is one of the following that constitute an intent.
+     * Component package name, or component class name.
+     * @return {@code true} if the setting is successful, {@code false} otherwise.
+     */
+    @Override
+    public boolean setSatelliteSubscriberIdListChangedIntentComponent(String name) {
+        if (!mFeatureFlags.carrierRoamingNbIotNtn()) {
+            Log.d(LOG_TAG, "setSatelliteSubscriberIdListChangedIntentComponent:"
+                    + " carrierRoamingNbIotNtn is disabled");
+            return false;
+        }
+        Log.d(LOG_TAG, "setSatelliteSubscriberIdListChangedIntentComponent");
+        TelephonyPermissions.enforceShellOnly(
+                Binder.getCallingUid(), "setSatelliteSubscriberIdListChangedIntentComponent");
+        TelephonyPermissions.enforceCallingOrSelfModifyPermissionOrCarrierPrivilege(mApp,
+                SubscriptionManager.INVALID_SUBSCRIPTION_ID,
+                "setSatelliteSubscriberIdListChangedIntentComponent");
+        final long identity = Binder.clearCallingIdentity();
+        try {
+            return mSatelliteController.setSatelliteSubscriberIdListChangedIntentComponent(name);
+        } finally {
+            Binder.restoreCallingIdentity(identity);
+        }
+    }
+
+    /**
+     * This API can be used by only CTS to override the Euicc UI component.
+     *
+     * @param componentName ui component to be launched for testing. {@code null} to reset.
+     *
+     * @hide
+     */
+    @Override
+    public void setTestEuiccUiComponent(@Nullable ComponentName componentName) {
+        enforceModifyPermission();
+        log("setTestEuiccUiComponent: " + componentName);
+        mTestEuiccUiComponent = componentName;
+    }
+
+    /**
+     * This API can be used by only CTS to retrieve the Euicc UI component.
+     *
+     * @return Euicc UI component. {@code null} if not available.
+     * @hide
+     */
+    @Override
+    @Nullable
+    public ComponentName getTestEuiccUiComponent() {
+        enforceReadPrivilegedPermission("getTestEuiccUiComponent");
+        return mTestEuiccUiComponent;
+    }
+
+    /**
+     * This API can be used only for test purpose to override the carrier roaming Ntn eligibility
+     *
+     * @param state        to update Ntn Eligibility.
+     * @param resetRequired to reset the overridden flag in satellite controller.
+     * @return {@code true} if the shell command is successful, {@code false} otherwise.
+     */
+    public boolean overrideCarrierRoamingNtnEligibilityChanged(boolean state,
+            boolean resetRequired) {
+        return mSatelliteAccessController.overrideCarrierRoamingNtnEligibilityChanged(state,
+                resetRequired);
     }
 }
