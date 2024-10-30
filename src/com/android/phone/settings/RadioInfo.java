@@ -838,10 +838,14 @@ public class RadioInfo extends AppCompatActivity {
         mEsosDemoButton  = (Button) findViewById(R.id.demo_esos_questionnaire);
         mSatelliteEnableNonEmergencyModeButton = (Button) findViewById(
                 R.id.satellite_enable_non_emergency_mode);
-        CarrierConfigManager cm = mPhone.getContext().getSystemService(CarrierConfigManager.class);
-        if (!cm.getConfigForSubId(mPhone.getSubId(),
-                        CarrierConfigManager.KEY_SATELLITE_ATTACH_SUPPORTED_BOOL)
-                .getBoolean(CarrierConfigManager.KEY_SATELLITE_ATTACH_SUPPORTED_BOOL)) {
+        CarrierConfigManager cm = getSystemService(CarrierConfigManager.class);
+        PersistableBundle bundle = cm.getConfigForSubId(mSubId,
+                CarrierConfigManager.KEY_SATELLITE_ATTACH_SUPPORTED_BOOL,
+                CarrierConfigManager.KEY_SATELLITE_ESOS_SUPPORTED_BOOL);
+        if (!bundle.getBoolean(
+                CarrierConfigManager.KEY_SATELLITE_ESOS_SUPPORTED_BOOL, false)
+                || !bundle.getBoolean(
+                CarrierConfigManager.KEY_SATELLITE_ATTACH_SUPPORTED_BOOL, false)) {
             mSatelliteEnableNonEmergencyModeButton.setVisibility(View.GONE);
         }
         if (!TelephonyUtils.IS_DEBUGGABLE) {
