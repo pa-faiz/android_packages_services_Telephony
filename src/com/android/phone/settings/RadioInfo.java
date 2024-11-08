@@ -81,6 +81,7 @@ import android.os.HandlerThread;
 import android.os.Message;
 import android.os.PersistableBundle;
 import android.os.SystemProperties;
+import android.os.UserHandle;
 import android.os.UserManager;
 import android.telephony.AccessNetworkConstants;
 import android.telephony.CarrierConfigManager;
@@ -152,6 +153,7 @@ import com.android.phone.utils.Utils;
 import java.io.IOException;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -400,6 +402,8 @@ public class RadioInfo extends AppCompatActivity {
     private int mCellInfoRefreshRateIndex;
     private int mSelectedPhoneIndex;
     private boolean isExtServiceConnected = false;
+
+    private int mSubId = SubscriptionManager.INVALID_SUBSCRIPTION_ID;
 
     private String mActionEsos;
     private String mActionEsosDemo;
@@ -651,6 +655,7 @@ public class RadioInfo extends AppCompatActivity {
 
         mQueuedWork = new ThreadPoolExecutor(1, 1, RUNNABLE_TIMEOUT_MS, TimeUnit.MICROSECONDS,
                 new LinkedBlockingDeque<Runnable>());
+        mSubId = SubscriptionManager.getDefaultSubscriptionId();
         mConnectivityManager = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
         mPhone = getPhone(SubscriptionManager.getDefaultSubscriptionId());
         mTelephonyManager = ((TelephonyManager) getSystemService(TELEPHONY_SERVICE))
